@@ -1,0 +1,17 @@
+name: infra-control-agent
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: infra-control-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - infra-control-agent-data:/agent/data
+
+volumes:
+  infra-control-agent-data:
