@@ -46,6 +46,9 @@ else
 fi
 
 NONINTERACTIVE="${INSTALL_NONINTERACTIVE:-false}"
+if [[ -n "${CONTROL_API_URL:-}" && -n "${AGENT_ENROLL_TOKEN:-}" && -n "${AGENT_NODE_UUID:-}" ]]; then
+  NONINTERACTIVE="true"
+fi
 
 prompt REPO_URL "GitHub repo URL" "${REPO_URL:-$REPO_URL_DEFAULT}"
 prompt REPO_BRANCH "Git branch/tag" "${REPO_BRANCH:-$BRANCH_DEFAULT}"
