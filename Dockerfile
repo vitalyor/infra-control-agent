@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY requirements.txt ./
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends docker.io \
+    && apt-get install -y --no-install-recommends docker.io procps \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt
 
