@@ -3,212 +3,292 @@ from __future__ import annotations
 import json
 import os
 import platform
-import secrets
+import shutil
 import subprocess
 import time
-from pathlib import Path
+import socket
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.client import HTTPConnection
 from typing import Any
-
-import requests
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from urllib.parse import urlparse
 
 
-CONTROL_API_URL = str(os.getenv("CONTROL_API_URL") or "http://localhost:8090").rstrip("/")
-AGENT_ID = str(os.getenv("AGENT_ID") or "").strip().lower() or secrets.token_hex(8)
-AGENT_NODE_UUID = str(os.getenv("AGENT_NODE_UUID") or "").strip().lower()
-AGENT_DISPLAY_NAME = str(os.getenv("AGENT_DISPLAY_NAME") or platform.node()).strip() or AGENT_ID
-ENROLL_TOKEN = str(os.getenv("AGENT_ENROLL_TOKEN") or "").strip()
-ACCESS_TOKEN = str(os.getenv("AGENT_ACCESS_TOKEN") or "").strip()
-POLL_INTERVAL_S = max(2, int(os.getenv("AGENT_POLL_INTERVAL_S") or "8"))
-HEARTBEAT_INTERVAL_S = max(5, int(os.getenv("AGENT_HEARTBEAT_INTERVAL_S") or "20"))
-STATE_PATH = Path(str(os.getenv("AGENT_STATE_PATH") or "/agent/data/state.json"))
-VERIFY_TLS = str(os.getenv("AGENT_VERIFY_TLS") or "true").strip().lower() in {"1", "true", "yes", "on"}
+AGENT_ID = str(os.getenv("AGENT_ID") or platform.node() or "infra-control-agent").strip()
+AGENT_API_TOKEN = str(os.getenv("AGENT_API_TOKEN") or "").strip()
+AGENT_HTTP_HOST = str(os.getenv("AGENT_HTTP_HOST") or "0.0.0.0").strip()
+AGENT_HTTP_PORT = int(os.getenv("AGENT_HTTP_PORT") or "8091")
+DOCKER_BIN = str(
+    os.getenv("AGENT_DOCKER_BIN")
+    or shutil.which("docker")
+    or ("/usr/bin/docker" if os.path.exists("/usr/bin/docker") else "")
+).strip()
+DOCKER_SOCKET = str(os.getenv("AGENT_DOCKER_SOCKET") or "/var/run/docker.sock").strip()
 
 
-def _load_state() -> dict[str, Any]:
-    if not STATE_PATH.exists():
-        return {}
+def _run_cmd(cmd: list[str], *, timeout_s: int = 120) -> dict[str, Any]:
+    started = time.time()
     try:
-        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _save_state(payload: dict[str, Any]) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _gen_keypair() -> tuple[str, str]:
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode("utf-8")
-    public_pem = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("utf-8")
-    return private_pem, public_pem
-
-
-def _request(method: str, path: str, *, token: str = "", payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    url = f"{CONTROL_API_URL}{path}"
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
-    resp = requests.request(
-        method,
-        url,
-        data=body if method.upper() in {"POST", "PUT", "PATCH"} else None,
-        headers=headers,
-        timeout=30,
-        verify=VERIFY_TLS,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return data if isinstance(data, dict) else {}
-
-
-def _register_if_needed(state: dict[str, Any]) -> dict[str, Any]:
-    current_token = str(state.get("access_token") or ACCESS_TOKEN).strip()
-    if current_token:
-        return state
-    enroll_token = str(state.get("enroll_token") or ENROLL_TOKEN).strip()
-    if not enroll_token:
-        raise RuntimeError("Agent has no AGENT_ENROLL_TOKEN and no saved access token")
-    private_pem, public_pem = _gen_keypair()
-    data = _request(
-        "POST",
-        "/control/v1/agents/register",
-        payload={
-            "enroll_token": enroll_token,
-            "agent_id": AGENT_ID,
-            "node_uuid": AGENT_NODE_UUID,
-            "display_name": AGENT_DISPLAY_NAME,
-            "public_key_pem": public_pem,
-            "capabilities": {
-                "docker": True,
-                "host_diagnostics": True,
-                "commands_allowlist": True,
-            },
-        },
-    )
-    token = str(data.get("access_token") or "").strip()
-    if not token:
-        raise RuntimeError("Control API register returned empty access_token")
-    state.update(
-        {
-            "agent_id": AGENT_ID,
-            "node_uuid": AGENT_NODE_UUID,
-            "display_name": AGENT_DISPLAY_NAME,
-            "private_key_pem": private_pem,
-            "public_key_pem": public_pem,
-            "access_token": token,
-            "registered_at": time.time(),
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+        return {
+            "ok": proc.returncode == 0,
+            "exit_code": proc.returncode,
+            "stdout": proc.stdout[-12000:],
+            "stderr": proc.stderr[-12000:],
+            "duration_ms": int((time.time() - started) * 1000),
         }
-    )
-    _save_state(state)
-    return state
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False,
+            "exit_code": None,
+            "stdout": (exc.stdout or "")[-12000:] if isinstance(exc.stdout, str) else "",
+            "stderr": (exc.stderr or "")[-12000:] if isinstance(exc.stderr, str) else "command timed out",
+            "duration_ms": int((time.time() - started) * 1000),
+        }
 
 
-def _run_cmd(cmd: list[str], *, timeout_s: int = 120) -> tuple[int, str, str]:
-    proc = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout_s,
-        check=False,
-    )
-    return proc.returncode, proc.stdout[-4000:], proc.stderr[-4000:]
+class UnixHTTPConnection(HTTPConnection):
+    def __init__(self, socket_path: str, *, timeout: int = 120) -> None:
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
 
 
-def _exec_action(action: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any], str]:
-    act = str(action or "").strip().lower()
-    if act == "diagnostics.host":
-        code, out, err = _run_cmd(["sh", "-lc", "uptime && df -h && free -m || true"], timeout_s=30)
-        status = "done" if code == 0 else "failed"
-        return status, {"stdout": out, "stderr": err}, ""
+def _docker_available() -> bool:
+    return bool(DOCKER_BIN) or os.path.exists(DOCKER_SOCKET)
 
-    if act == "docker.ps":
-        code, out, err = _run_cmd(["docker", "ps", "--format", "{{.ID}} {{.Names}} {{.Status}}"], timeout_s=30)
-        status = "done" if code == 0 else "failed"
-        return status, {"stdout": out, "stderr": err}, ""
 
-    if act == "docker.logs.tail":
-        container = str(payload.get("container") or "").strip()
-        tail = max(10, min(5000, int(payload.get("tail") or 200)))
-        if not container:
-            return "failed", {}, "container is required"
-        code, out, err = _run_cmd(["docker", "logs", "--tail", str(tail), container], timeout_s=60)
-        status = "done" if code == 0 else "failed"
-        return status, {"stdout": out, "stderr": err}, ""
+def _docker_api_request(
+    method: str,
+    path: str,
+    *,
+    timeout_s: int = 120,
+    body: bytes | None = None,
+    docker_log_stream: bool = False,
+) -> dict[str, Any]:
+    started = time.time()
+    if not os.path.exists(DOCKER_SOCKET):
+        return {
+            "ok": False,
+            "exit_code": None,
+            "stdout": "",
+            "stderr": f"docker socket is not available: {DOCKER_SOCKET}",
+            "duration_ms": 0,
+        }
 
-    if act == "docker.restart":
-        container = str(payload.get("container") or "").strip()
-        if not container:
-            return "failed", {}, "container is required"
-        code, out, err = _run_cmd(["docker", "restart", container], timeout_s=60)
-        status = "done" if code == 0 else "failed"
-        return status, {"stdout": out, "stderr": err}, ""
+    conn = UnixHTTPConnection(DOCKER_SOCKET, timeout=timeout_s)
+    try:
+        conn.request(method, path, body=body)
+        response = conn.getresponse()
+        raw = response.read()
+        if docker_log_stream:
+            raw = _decode_docker_log_stream(raw)
+        text = raw.decode("utf-8", errors="replace")
+        ok = 200 <= response.status < 300
+        return {
+            "ok": ok,
+            "exit_code": 0 if ok else response.status,
+            "stdout": text[-12000:] if ok else "",
+            "stderr": "" if ok else text[-12000:],
+            "duration_ms": int((time.time() - started) * 1000),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "exit_code": None,
+            "stdout": "",
+            "stderr": str(exc),
+            "duration_ms": int((time.time() - started) * 1000),
+        }
+    finally:
+        conn.close()
 
-    return "skipped", {}, f"unsupported action: {act}"
+
+def _decode_docker_log_stream(raw: bytes) -> bytes:
+    frames: list[bytes] = []
+    pos = 0
+    while pos + 8 <= len(raw):
+        stream_type = raw[pos]
+        size = int.from_bytes(raw[pos + 4 : pos + 8], "big")
+        next_pos = pos + 8 + size
+        if stream_type not in (1, 2) or next_pos > len(raw):
+            return raw
+        frames.append(raw[pos + 8 : next_pos])
+        pos = next_pos
+    if pos != len(raw):
+        return raw
+    return b"".join(frames)
+
+
+def _docker_ps() -> dict[str, Any]:
+    if DOCKER_BIN:
+        return _run_cmd([DOCKER_BIN, "ps", "--format", "{{.ID}} {{.Names}} {{.Status}}"], timeout_s=30)
+
+    result = _docker_api_request("GET", "/containers/json", timeout_s=30)
+    if not result["ok"]:
+        return result
+
+    containers = json.loads(result["stdout"] or "[]")
+    lines = []
+    for container in containers:
+        container_id = str(container.get("Id") or "")[:12]
+        names = container.get("Names") or []
+        name = str(names[0]).lstrip("/") if names else ""
+        status = str(container.get("Status") or "")
+        lines.append(f"{container_id} {name} {status}".strip())
+    result["stdout"] = "\n".join(lines)
+    return result
+
+
+def _docker_logs_tail(container: str, tail: int) -> dict[str, Any]:
+    if DOCKER_BIN:
+        return _run_cmd([DOCKER_BIN, "logs", "--tail", str(tail), container], timeout_s=60)
+
+    path = f"/containers/{container}/logs?stdout=1&stderr=1&tail={tail}"
+    return _docker_api_request("GET", path, timeout_s=60, docker_log_stream=True)
+
+
+def _docker_restart(container: str) -> dict[str, Any]:
+    if DOCKER_BIN:
+        return _run_cmd([DOCKER_BIN, "restart", container], timeout_s=60)
+
+    result = _docker_api_request("POST", f"/containers/{container}/restart", timeout_s=60)
+    if result["ok"]:
+        result["stdout"] = container
+    return result
+
+
+def _json_response(handler: BaseHTTPRequestHandler, status: HTTPStatus, payload: dict[str, Any]) -> None:
+    body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    handler.send_response(status.value)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def _read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
+    length = int(handler.headers.get("Content-Length") or "0")
+    if length <= 0:
+        return {}
+    raw = handler.rfile.read(length)
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("request body must be a JSON object")
+    return data
+
+
+def _is_authorized(handler: BaseHTTPRequestHandler) -> bool:
+    if not AGENT_API_TOKEN:
+        return True
+    auth = str(handler.headers.get("Authorization") or "").strip()
+    x_token = str(handler.headers.get("X-Agent-Token") or "").strip()
+    return auth == f"Bearer {AGENT_API_TOKEN}" or x_token == AGENT_API_TOKEN
+
+
+class AgentHandler(BaseHTTPRequestHandler):
+    server_version = "InfraControlAgent/0.1"
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        print(f"[http] {self.address_string()} - {fmt % args}")
+
+    def _require_auth(self) -> bool:
+        if _is_authorized(self):
+            return True
+        _json_response(self, HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+        return False
+
+    def do_GET(self) -> None:
+        path = urlparse(self.path).path.rstrip("/") or "/"
+
+        if path == "/health":
+            _json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "agent_id": AGENT_ID,
+                    "hostname": platform.node(),
+                    "docker_available": _docker_available(),
+                },
+            )
+            return
+
+        if not self._require_auth():
+            return
+
+        if path == "/v1/diagnostics/host":
+            result = _run_cmd(["sh", "-lc", "uptime && df -h && free -m || true"], timeout_s=30)
+            _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.INTERNAL_SERVER_ERROR, result)
+            return
+
+        if path == "/v1/docker/ps":
+            if not _docker_available():
+                _json_response(self, HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "docker is not available"})
+                return
+            result = _docker_ps()
+            _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.INTERNAL_SERVER_ERROR, result)
+            return
+
+        _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path.rstrip("/") or "/"
+        if not self._require_auth():
+            return
+
+        try:
+            payload = _read_json_body(self)
+        except Exception as exc:
+            _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        if path == "/v1/docker/logs/tail":
+            if not _docker_available():
+                _json_response(self, HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "docker is not available"})
+                return
+            container = str(payload.get("container") or "").strip()
+            tail = max(10, min(5000, int(payload.get("tail") or 200)))
+            if not container:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "container is required"})
+                return
+            result = _docker_logs_tail(container, tail)
+            _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.INTERNAL_SERVER_ERROR, result)
+            return
+
+        if path == "/v1/docker/restart":
+            if not _docker_available():
+                _json_response(self, HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "docker is not available"})
+                return
+            container = str(payload.get("container") or "").strip()
+            if not container:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "container is required"})
+                return
+            result = _docker_restart(container)
+            _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.INTERNAL_SERVER_ERROR, result)
+            return
+
+        _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
 
 def main() -> None:
-    state = _load_state()
-    if "enroll_token" not in state and ENROLL_TOKEN:
-        state["enroll_token"] = ENROLL_TOKEN
-    state = _register_if_needed(state)
-    token = str(state.get("access_token") or "").strip()
-    if not token:
-        raise RuntimeError("access_token is missing after registration")
-
-    last_hb = 0.0
-    while True:
-        now = time.time()
-        if now - last_hb >= HEARTBEAT_INTERVAL_S:
-            try:
-                _request(
-                    "POST",
-                    "/control/v1/agents/heartbeat",
-                    token=token,
-                    payload={"status": "active"},
-                )
-                last_hb = now
-            except Exception as exc:
-                print(f"[agent] heartbeat failed: {exc}")
-
-        try:
-            data = _request("GET", "/control/v1/agents/poll?limit=3", token=token)
-            runs = data.get("runs") if isinstance(data.get("runs"), list) else []
-            for run in runs:
-                run_id = str(run.get("run_id") or "").strip()
-                action = str(run.get("action") or "").strip()
-                payload = run.get("payload") if isinstance(run.get("payload"), dict) else {}
-                if not run_id:
-                    continue
-                status, result, error = _exec_action(action, payload)
-                try:
-                    _request(
-                        "POST",
-                        f"/control/v1/agents/runs/{run_id}/result",
-                        token=token,
-                        payload={"status": status, "result": result, "error": error},
-                    )
-                except Exception as exc:
-                    print(f"[agent] failed to submit result run={run_id}: {exc}")
-        except Exception as exc:
-            print(f"[agent] poll failed: {exc}")
-
-        time.sleep(POLL_INTERVAL_S)
+    server = ThreadingHTTPServer((AGENT_HTTP_HOST, AGENT_HTTP_PORT), AgentHandler)
+    print(f"[agent] listening on {AGENT_HTTP_HOST}:{AGENT_HTTP_PORT}, agent_id={AGENT_ID}")
+    if not AGENT_API_TOKEN:
+        print("[agent] AGENT_API_TOKEN is empty; protected endpoints are open")
+    server.serve_forever()
 
 
 if __name__ == "__main__":
     main()
-
