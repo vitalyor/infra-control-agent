@@ -11,6 +11,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY main.py openapi.json ./
+COPY main.py ./
 
 CMD ["python", "main.py"]

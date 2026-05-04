@@ -188,7 +188,6 @@ Background jobs хранятся в памяти агента. Настройк�
 ## Endpoints
 
 - `GET /health`
-- `GET /openapi.json`
 - `GET /v1/agent/info`
 - `GET /v1/node/summary`
 - `GET /v1/diagnostics/host`
@@ -231,13 +230,7 @@ Server tuning требует доступ к `/etc/sysctl.d` хоста и host 
 
 ## OpenAPI
 
-Начальная OpenAPI-спека лежит в `openapi.json` и доступна из агента:
-
-```bash
-curl -sS http://127.0.0.1:8091/openapi.json
-```
-
-Новые endpoint'ы нужно добавлять в `openapi.json` вместе с реализацией, чтобы Telegram-боту было проще генерировать клиент/типы и сверять request/response.
+OpenAPI-спеку храните отдельно для разработки бота/клиента. Агент её по HTTP не публикует.
 
 ## Health
 
