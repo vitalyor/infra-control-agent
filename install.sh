@@ -43,15 +43,25 @@ services:
       dockerfile: Dockerfile
     container_name: infra-control-agent
     restart: unless-stopped
+    privileged: true
+    network_mode: host
+    pid: host
     environment:
       AGENT_ID: infra-control-agent
       AGENT_API_TOKEN: paste-token-from-panel
-      AGENT_HTTP_HOST: 0.0.0.0
       AGENT_HTTP_PORT: ${DEFAULT_PORT}
-    ports:
-      - "${DEFAULT_PORT}:${DEFAULT_PORT}"
+      AGENT_LOG_LEVEL: warning
+      AGENT_ACCESS_LOG: "false"
+      AGENT_ALLOWED_UPGRADES: panel,node,subscription
+      AGENT_JOB_MAX_COUNT: 20
+      AGENT_JOB_MAX_AGE_S: 3600
+      AGENT_MAX_ACTIVE_JOBS: 2
+      AGENT_MAX_BODY_BYTES: 65536
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /opt:/host/opt:rw
+      - /etc/sysctl.d:/host/etc/sysctl.d:rw
+      - /proc:/host/proc:ro
       - infra-control-agent-data:/agent/data
 
 volumes:
@@ -85,7 +95,7 @@ Next steps:
   1. cd ${INSTALL_DIR}
   2. nano docker-compose.yml
   3. Replace AGENT_API_TOKEN with the token generated in the panel/bot.
-  4. Change AGENT_HTTP_PORT and ports if the panel generated another port.
+  4. Change AGENT_HTTP_PORT if the panel generated another port.
   5. Open the port if UFW is enabled:
      sudo ufw status | grep -qw active && sudo ufw allow ${DEFAULT_PORT}/tcp || true
   6. Start the agent:

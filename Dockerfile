@@ -7,10 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY requirements.txt ./
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends docker.io procps \
+    && apt-get install -y --no-install-recommends docker.io docker-compose procps util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY main.py ./
+COPY main.py openapi.json ./
 
 CMD ["python", "main.py"]

@@ -7,16 +7,27 @@ services:
       dockerfile: Dockerfile
     container_name: infra-control-agent
     restart: unless-stopped
+    privileged: true
+    pid: ${AGENT_PID_MODE:-host}
     environment:
       AGENT_ID: infra-control-agent
       AGENT_API_TOKEN: paste-token-from-panel
-      AGENT_HTTP_HOST: 0.0.0.0
       AGENT_HTTP_PORT: 8091
-    ports:
-      - "8091:8091"
+      AGENT_LOG_LEVEL: warning
+      AGENT_ACCESS_LOG: "false"
+      AGENT_ALLOWED_UPGRADES: panel,node,subscription
+      AGENT_JOB_MAX_COUNT: 20
+      AGENT_JOB_MAX_AGE_S: 3600
+      AGENT_MAX_ACTIVE_JOBS: 2
+      AGENT_MAX_BODY_BYTES: 65536
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${AGENT_HOST_OPT:-/opt}:/host/opt:rw
+      - ${AGENT_HOST_SYSCTLD:-/etc/sysctl.d}:/host/etc/sysctl.d:rw
+      - ${AGENT_HOST_PROC:-/proc}:/host/proc:ro
       - infra-control-agent-data:/agent/data
+    ports:
+      - "${AGENT_HTTP_PORT:-8091}:${AGENT_HTTP_PORT:-8091}"
 
 volumes:
   infra-control-agent-data:
