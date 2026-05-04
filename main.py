@@ -1506,11 +1506,6 @@ def _apt_install_plan(package: str) -> list[dict[str, Any]]:
 
 
 def _agent_info() -> dict[str, Any]:
-    openapi_version = None
-    try:
-        openapi_version = _openapi_spec().get("info", {}).get("version")
-    except Exception:
-        openapi_version = None
     mounts = {
         "host_root": {"path": AGENT_HOST_ROOT, "exists": os.path.exists(AGENT_HOST_ROOT)},
         "host_opt": {"path": AGENT_HOST_DISK_PATH, "exists": os.path.exists(AGENT_HOST_DISK_PATH)},
@@ -1553,10 +1548,6 @@ def _agent_info() -> dict[str, Any]:
             "namespaces": _namespace_diagnostics(),
             "mounts": mounts,
             "service_control": _service_control_available(),
-        },
-        "openapi": {
-            "version": openapi_version,
-            "path": "/openapi.json",
         },
     }
 
@@ -2172,15 +2163,6 @@ def _json_response(handler: BaseHTTPRequestHandler, status: HTTPStatus, payload:
     handler.wfile.write(body)
 
 
-def _openapi_spec() -> dict[str, Any]:
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "openapi.json")
-    with open(path, "r", encoding="utf-8") as file:
-        data = json.load(file)
-    if isinstance(data, dict):
-        return data
-    raise ValueError("openapi.json must contain a JSON object")
-
-
 def _docker_http_status(result: dict[str, Any]) -> HTTPStatus:
     if result.get("ok"):
         return HTTPStatus.OK
@@ -2346,14 +2328,6 @@ class AgentHandler(BaseHTTPRequestHandler):
             return
 
         if not self._require_auth():
-            return
-
-        if path == "/openapi.json":
-            try:
-                _json_response(self, HTTPStatus.OK, _openapi_spec())
-            except Exception as exc:
-                _log_error("openapi_load_failed", request_id=self._request_id(), error=exc)
-                _json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
             return
 
         if path == "/v1/node/summary":
