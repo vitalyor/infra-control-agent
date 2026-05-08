@@ -8,6 +8,7 @@ WEB_SERVER="${WEB_SERVER:-nginx}"                  # nginx|caddy
 CERT_METHOD="${CERT_METHOD:-none}"                 # none|http|cloudflare
 CERT_DOMAIN="${CERT_DOMAIN:-}"
 CERT_EMAIL="${CERT_EMAIL:-}"
+CERT_FORCE_RENEWAL="${CERT_FORCE_RENEWAL:-true}"   # true|false
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
 TEMPLATE_SOURCE="${TEMPLATE_SOURCE:-builtin}"      # builtin|url
 COMPOSE_TEMPLATE_URL="${COMPOSE_TEMPLATE_URL:-}"
@@ -42,6 +43,10 @@ if [[ "${CERT_METHOD}" != "none" ]]; then
     [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || { echo "CLOUDFLARE_API_TOKEN is required for cloudflare method" >&2; exit 2; }
   fi
 fi
+if [[ "${CERT_FORCE_RENEWAL}" != "true" && "${CERT_FORCE_RENEWAL}" != "false" ]]; then
+  echo "CERT_FORCE_RENEWAL must be true or false" >&2
+  exit 2
+fi
 
 if [[ "${UFW_AUTO}" != "true" && "${UFW_AUTO}" != "false" ]]; then
   echo "UFW_AUTO must be true or false" >&2
@@ -53,7 +58,7 @@ if [[ "${UFW_STRICT}" != "true" && "${UFW_STRICT}" != "false" ]]; then
 fi
 
 if [[ "${DRY_RUN:-false}" == "true" ]]; then
-  echo "DRY_RUN: install node domain=${DOMAIN} cert_domain=${CERT_DOMAIN} web=${WEB_SERVER} cert=${CERT_METHOD} tpl=${TEMPLATE_SOURCE} ufw_strict=${UFW_STRICT}"
+  echo "DRY_RUN: install node domain=${DOMAIN} cert_domain=${CERT_DOMAIN} web=${WEB_SERVER} cert=${CERT_METHOD} force_renew=${CERT_FORCE_RENEWAL} tpl=${TEMPLATE_SOURCE} ufw_strict=${UFW_STRICT}"
   exit 0
 fi
 
@@ -120,6 +125,10 @@ cat > "${WWW_DIR}/index.html" <<'EOF'
 EOF
 
 if [[ "${CERT_METHOD}" != "none" ]]; then
+  cert_force_args=()
+  if [[ "${CERT_FORCE_RENEWAL}" == "true" ]]; then
+    cert_force_args+=(--force-renewal)
+  fi
   if [[ "${CERT_METHOD}" == "http" ]]; then
     tmp_compose="/tmp/infra-agent-certbot-http.yml"
     cat > "${tmp_compose}" <<EOF
@@ -134,7 +143,8 @@ services:
 EOF
     docker compose -f "${tmp_compose}" run --rm certbot \
       certonly --non-interactive --agree-tos --standalone \
-      --email "${CERT_EMAIL}" -d "${CERT_DOMAIN}"
+      --email "${CERT_EMAIL}" -d "${CERT_DOMAIN}" \
+      "${cert_force_args[@]}"
     rm -f "${tmp_compose}"
   else
     need_cmd certbot
@@ -145,7 +155,8 @@ EOF
     chmod 600 /root/.secrets/certbot/cloudflare.ini
     certbot certonly --non-interactive --agree-tos --email "${CERT_EMAIL}" \
       --dns-cloudflare --dns-cloudflare-credentials /root/.secrets/certbot/cloudflare.ini \
-      --dns-cloudflare-propagation-seconds 60 -d "${CERT_DOMAIN}"
+      --dns-cloudflare-propagation-seconds 60 -d "${CERT_DOMAIN}" \
+      "${cert_force_args[@]}"
   fi
 fi
 
