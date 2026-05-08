@@ -3,6 +3,7 @@ data/
 __pycache__/
 openapi.json
 BOT_INTEGRATION_TODO.md
+TEST_FULL_RUN_INPUTS.md
 
 # macOS / editor
 .DS_Store
