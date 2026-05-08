@@ -26,6 +26,7 @@ for d in "${arr[@]}"; do
   )
 done
 if (( count == 0 )); then
+  echo "DIAG_SERVICES_NO_VALID_DIRS mode=${MODE} dirs=${DIRS}"
   echo "no valid service dirs (nothing to update)"
   exit 0
 fi

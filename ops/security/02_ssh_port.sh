@@ -5,10 +5,12 @@ PORT="${PORT:-22}"
 SSHD_CONFIG="${SSHD_CONFIG:-/etc/ssh/sshd_config}"
 
 if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
+  echo "DIAG_SSH_PORT_INVALID port=${PORT}" >&2
   echo "invalid PORT" >&2
   exit 2
 fi
 if [[ "${ACTION}" == "remove" && "${PORT}" == "22" ]]; then
+  echo "DIAG_SSH_PORT_REMOVE22_DENIED" >&2
   echo "refusing to remove default SSH port 22" >&2
   exit 2
 fi
@@ -33,6 +35,7 @@ case "${ACTION}" in
     grep -q '^Port ' "${SSHD_CONFIG}" || echo "Port 22" >> "${SSHD_CONFIG}"
     ;;
   *)
+    echo "DIAG_SSH_ACTION_UNSUPPORTED action=${ACTION}" >&2
     echo "invalid ACTION" >&2
     exit 2
     ;;

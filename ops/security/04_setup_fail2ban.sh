@@ -12,6 +12,7 @@ fi
 
 ensure_fail2ban() {
   if ! command -v fail2ban-client >/dev/null 2>&1; then
+    echo "DIAG_FAIL2BAN_INSTALLING"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get -y install fail2ban
   fi
@@ -43,6 +44,7 @@ EOF
     systemctl restart fail2ban
     ;;
   *)
+    echo "DIAG_FAIL2BAN_ACTION_UNSUPPORTED action=${F2B_ACTION}" >&2
     echo "invalid F2B_ACTION" >&2
     exit 2
     ;;
