@@ -108,6 +108,7 @@ curl -sS http://127.0.0.1:8091/health
 
 ### Требуют токен
 - `GET /v1/agent/info`
+- `GET /v1/agent/update-log`
 - `GET /v1/actions`
 - `GET /v1/actions/{job_id}`
 - `DELETE /v1/actions/{job_id}`
