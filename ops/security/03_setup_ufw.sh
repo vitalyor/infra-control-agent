@@ -14,10 +14,13 @@ if [[ "${DRY_RUN:-false}" == "true" ]]; then
   exit 0
 fi
 
+if ! command -v ufw >/dev/null 2>&1; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get -y install ufw
+fi
+
 case "${UFW_ACTION}" in
   install)
-    apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get -y install ufw
     systemctl enable ufw || true
     systemctl start ufw || true
     ;;
