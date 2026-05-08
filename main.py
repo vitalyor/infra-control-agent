@@ -33,6 +33,7 @@ AGENT_ACCESS_LOG = str(os.getenv("AGENT_ACCESS_LOG") or "true").strip().lower() 
 AGENT_STARTED_AT = time.time()
 SCRIPT_DIR = Path(__file__).resolve().parent
 OPS_DIR = SCRIPT_DIR / "ops"
+HOST_OPS_DIR = Path("/opt/infra-control-agent/ops-runtime")
 REMNANODE_DIR = Path("/opt/remnanode")
 
 JOBS: dict[str, dict[str, Any]] = {}
@@ -131,6 +132,20 @@ def _run_cmd(cmd: list[str], env: dict[str, str], timeout_s: int) -> dict[str, A
         }
 
 
+def _sync_ops_to_host() -> None:
+    HOST_OPS_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(OPS_DIR, HOST_OPS_DIR, dirs_exist_ok=True)
+
+
+def _op_exec_cmd(op: "Operation") -> list[str]:
+    # Run all operations in host namespaces to manage the server itself, not the agent container.
+    if shutil.which("nsenter"):
+        _sync_ops_to_host()
+        host_script = HOST_OPS_DIR / op.script_relpath
+        return ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "/bin/bash", str(host_script)]
+    return ["/bin/bash", str(op.script_path)]
+
+
 def _active_jobs_count() -> int:
     with JOBS_LOCK:
         return sum(1 for j in JOBS.values() if j.get("status") in {"queued", "running"})
@@ -193,7 +208,7 @@ def _run_job(job_id: str) -> None:
     env["DRY_RUN"] = "true" if job.get("dry_run") else "false"
     for key, value in (job.get("params") or {}).items():
         env[str(key).upper()] = str(value)
-    result = _run_cmd(["/bin/bash", str(op.script_path)], env=env, timeout_s=op.timeout_s)
+    result = _run_cmd(_op_exec_cmd(op), env=env, timeout_s=op.timeout_s)
     with JOBS_LOCK:
         job2 = JOBS.get(job_id)
         if not job2:
@@ -473,7 +488,7 @@ class Handler(BaseHTTPRequestHandler):
             op = OPERATIONS["security.status"]
             env = os.environ.copy()
             env["DRY_RUN"] = "false"
-            result = _run_cmd(["/bin/bash", str(op.script_path)], env=env, timeout_s=op.timeout_s)
+            result = _run_cmd(_op_exec_cmd(op), env=env, timeout_s=op.timeout_s)
             _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.SERVICE_UNAVAILABLE, {"ok": result["ok"], "result": result})
             return
         if path == "/v1/remnawave/config":
