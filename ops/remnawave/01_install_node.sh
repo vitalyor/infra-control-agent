@@ -12,6 +12,9 @@ CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
 TEMPLATE_SOURCE="${TEMPLATE_SOURCE:-builtin}"      # builtin|url
 COMPOSE_TEMPLATE_URL="${COMPOSE_TEMPLATE_URL:-}"
 WEB_TEMPLATE_URL="${WEB_TEMPLATE_URL:-}"
+UFW_AUTO="${UFW_AUTO:-true}"                  # true|false
+SSH_PORT="${SSH_PORT:-22}"
+AGENT_PORT="${AGENT_PORT:-8091}"
 
 BASE_DIR="/opt/remnanode"
 WWW_DIR="/var/www/html"
@@ -35,6 +38,11 @@ if [[ "${CERT_METHOD}" != "none" ]]; then
   if [[ "${CERT_METHOD}" == "cloudflare" ]]; then
     [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || { echo "CLOUDFLARE_API_TOKEN is required for cloudflare method" >&2; exit 2; }
   fi
+fi
+
+if [[ "${UFW_AUTO}" != "true" && "${UFW_AUTO}" != "false" ]]; then
+  echo "UFW_AUTO must be true or false" >&2
+  exit 2
 fi
 
 if [[ "${DRY_RUN:-false}" == "true" ]]; then
@@ -132,6 +140,19 @@ EOF
       --dns-cloudflare --dns-cloudflare-credentials /root/.secrets/certbot/cloudflare.ini \
       --dns-cloudflare-propagation-seconds 60 -d "${CERT_DOMAIN}"
   fi
+fi
+
+if [[ "${UFW_AUTO}" == "true" ]]; then
+  if ! command -v ufw >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get -y install ufw
+  fi
+  ufw allow "${SSH_PORT}/tcp" || true
+  ufw allow "${NODE_PORT}/tcp" || true
+  ufw allow "${AGENT_PORT}/tcp" || true
+  ufw allow 80/tcp || true
+  ufw allow 443/tcp || true
+  ufw --force enable || true
 fi
 
 cd "${BASE_DIR}"
