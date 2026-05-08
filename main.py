@@ -18,7 +18,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 
-AGENT_VERSION = "0.4.2"
+AGENT_VERSION = "0.4.3"
 AGENT_ID = str(os.getenv("AGENT_ID") or platform.node() or "infra-control-agent").strip()
 AGENT_API_TOKEN = str(os.getenv("AGENT_API_TOKEN") or "").strip()
 AGENT_ALLOW_EMPTY_TOKEN = str(os.getenv("AGENT_ALLOW_EMPTY_TOKEN") or "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -36,6 +36,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 OPS_DIR = SCRIPT_DIR / "ops"
 HOST_OPS_DIR = Path("/opt/infra-control-agent/ops-runtime")
 REMNANODE_DIR = Path("/opt/remnanode")
+SELF_UPDATE_LOG_PATH = Path("/tmp/infra-agent-self-update.log")
 
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -573,6 +574,30 @@ class Handler(BaseHTTPRequestHandler):
                     "max_body_bytes": AGENT_MAX_BODY_BYTES,
                 },
                 "operations": sorted(OPERATIONS.keys()),
+            })
+            return
+        if path == "/v1/agent/update-log":
+            if not SELF_UPDATE_LOG_PATH.exists():
+                _json_response(self, HTTPStatus.OK, {
+                    "ok": True,
+                    "exists": False,
+                    "status": "missing",
+                    "log_path": str(SELF_UPDATE_LOG_PATH),
+                    "success": False,
+                    "content": "",
+                })
+                return
+            content = SELF_UPDATE_LOG_PATH.read_text(encoding="utf-8", errors="ignore")
+            tail = content[-12000:]
+            success = "[self-update] done" in content.lower()
+            status = "success" if success else "running_or_failed"
+            _json_response(self, HTTPStatus.OK, {
+                "ok": True,
+                "exists": True,
+                "status": status,
+                "log_path": str(SELF_UPDATE_LOG_PATH),
+                "success": success,
+                "content": tail,
             })
             return
         if path == "/v1/actions":

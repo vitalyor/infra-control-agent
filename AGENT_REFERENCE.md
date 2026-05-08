@@ -74,6 +74,7 @@ Body:
 Добавлены для удобства интеграции:
 
 - `GET /v1/security/status`
+- `GET /v1/agent/update-log`
 - `GET /v1/remnawave/config?name=docker-compose|nginx|caddy`
 - `POST /v1/system/update`
 - `POST /v1/system/reboot`
