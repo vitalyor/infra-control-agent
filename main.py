@@ -329,6 +329,16 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
             "SSH_PORT": str(payload.get("ssh_port") or 22),
             "AGENT_PORT": str(payload.get("agent_port") or 8091),
         }
+        panel_ips = payload.get("panel_ips")
+        if isinstance(panel_ips, list):
+            params["PANEL_IPS"] = ",".join(str(x).strip() for x in panel_ips if str(x).strip())
+        elif payload.get("panel_ip") is not None:
+            params["PANEL_IPS"] = str(payload.get("panel_ip") or "")
+        bot_ips = payload.get("bot_ips")
+        if isinstance(bot_ips, list):
+            params["BOT_IPS"] = ",".join(str(x).strip() for x in bot_ips if str(x).strip())
+        elif payload.get("bot_ip") is not None:
+            params["BOT_IPS"] = str(payload.get("bot_ip") or "")
         if payload.get("cert_domain") is not None:
             params["CERT_DOMAIN"] = str(payload.get("cert_domain") or "")
         if payload.get("cert_email") is not None:

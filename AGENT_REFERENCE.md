@@ -87,8 +87,13 @@ Body:
 - `POST /v1/security/certbot`
 
 ### UFW payload (alias `/v1/ufw/action`)
-- `action`: `install|status|enable|disable|start|stop|restart|reset`
+- `action`: `install|status|status_numbered|enable|disable|start|stop|restart|reset`
 - `rule_action`: `allow|deny|reject|limit|delete`
 - Raw rule mode: `rule` (example: `8091/tcp`, `allow 8091/tcp`)
 - Structured mode: `port`, `proto`, `from`, `to`
 - Delete by number: `rule_num` with `rule_action=delete`
+
+### Node install payload additions (`/v1/remnawave/node/install`)
+- `panel_ips`: array of panel IPs for restricting `node_port` (or `panel_ip` for single IP)
+- `bot_ips`: array of bot IPs for restricting `agent_port` (or `bot_ip` for single IP)
+- `ufw_auto=true` applies rules in safe order: allow SSH first, then enable UFW
