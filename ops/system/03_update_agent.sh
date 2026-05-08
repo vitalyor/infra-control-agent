@@ -4,6 +4,7 @@ set -euo pipefail
 AGENT_STACK_DIR="${AGENT_STACK_DIR:-/opt/infragent}"
 UPDATE_DELAY_SEC="${UPDATE_DELAY_SEC:-2}"
 AGENT_SERVICE_NAME="${AGENT_SERVICE_NAME:-agent}"
+AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-infra-control-agent}"
 
 if [[ "${DRY_RUN:-false}" == "true" ]]; then
   echo "DRY_RUN: agent self-update dir=${AGENT_STACK_DIR} delay=${UPDATE_DELAY_SEC}s"
@@ -17,6 +18,10 @@ if [[ -z "${AGENT_SERVICE_NAME}" ]]; then
   echo "DIAG_AGENT_UPDATE_SERVICE_INVALID" >&2
   exit 2
 fi
+if [[ -z "${AGENT_CONTAINER_NAME}" ]]; then
+  echo "DIAG_AGENT_UPDATE_CONTAINER_INVALID" >&2
+  exit 2
+fi
 
 if ! [[ "${UPDATE_DELAY_SEC}" =~ ^[0-9]+$ ]]; then
   echo "DIAG_AGENT_UPDATE_DELAY_INVALID delay=${UPDATE_DELAY_SEC}" >&2
@@ -26,7 +31,8 @@ fi
 nohup /bin/bash -lc "sleep ${UPDATE_DELAY_SEC}; \
   cd '${AGENT_STACK_DIR}' && \
   echo '[self-update] start' && \
-  docker compose rm -sf '${AGENT_SERVICE_NAME}' || true; \
+  docker rm -f '${AGENT_CONTAINER_NAME}' >/dev/null 2>&1 || true; \
+  docker compose rm -sf '${AGENT_SERVICE_NAME}' >/dev/null 2>&1 || true; \
   docker compose up -d --build --force-recreate --remove-orphans '${AGENT_SERVICE_NAME}' && \
   docker compose ps && \
   echo '[self-update] done'" >/tmp/infra-agent-self-update.log 2>&1 &
