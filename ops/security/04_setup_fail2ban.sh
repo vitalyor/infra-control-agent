@@ -10,15 +10,23 @@ if [[ "${DRY_RUN:-false}" == "true" ]]; then
   exit 0
 fi
 
-case "${F2B_ACTION}" in
-  install)
+ensure_fail2ban() {
+  if ! command -v fail2ban-client >/dev/null 2>&1; then
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get -y install fail2ban
+  fi
+}
+
+case "${F2B_ACTION}" in
+  install)
+    ensure_fail2ban
     ;;
   start|stop|restart|enable|disable)
+    ensure_fail2ban
     systemctl "${F2B_ACTION}" fail2ban
     ;;
   config)
+    ensure_fail2ban
     mkdir -p /etc/fail2ban
     cat > /etc/fail2ban/jail.local <<EOF
 [DEFAULT]
@@ -41,4 +49,3 @@ EOF
 esac
 
 echo "Fail2ban operation completed"
-

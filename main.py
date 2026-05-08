@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import threading
@@ -145,6 +146,12 @@ def _op_exec_cmd(op: "Operation") -> list[str]:
         host_script = HOST_OPS_DIR / op.script_relpath
         return ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "/bin/bash", str(host_script)]
     return ["/bin/bash", str(op.script_path)]
+
+
+def _host_exec_cmd(argv: list[str]) -> list[str]:
+    if shutil.which("nsenter"):
+        return ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "/bin/bash", "-lc", shlex.join(argv)]
+    return argv
 
 
 def _active_jobs_count() -> int:
@@ -590,50 +597,55 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/remnawave/config":
-            name = str(payload.get("name") or "").strip()
-            content = payload.get("content")
-            if not isinstance(content, str):
-                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload("content must be string", "invalid_request"))
-                return
-            backup = bool(payload.get("backup") if "backup" in payload else True)
-            validate = bool(payload.get("validate") if "validate" in payload else True)
-            restart = bool(payload.get("restart") if "restart" in payload else False)
             try:
-                target = _config_path(name)
-            except Exception as exc:
-                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(str(exc), "invalid_request"))
-                return
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if backup and target.exists():
-                backup_path = target.with_suffix(target.suffix + f".bak.{int(time.time())}")
-                backup_path.write_text(target.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
-            target.write_text(content, encoding="utf-8")
-            checks: dict[str, Any] = {"written": str(target)}
-            if validate and name == "docker-compose":
-                result = _run_cmd(["docker", "compose", "-f", str(target), "config"], env=os.environ.copy(), timeout_s=60)
-                checks["compose_config"] = result
-                if not result.get("ok"):
-                    _json_response(
-                        self,
-                        HTTPStatus.BAD_REQUEST,
-                        _error_payload("docker compose config validation failed", "compose_validation_failed", checks=checks),
-                    )
+                name = str(payload.get("name") or "").strip()
+                content = payload.get("content")
+                if not isinstance(content, str):
+                    _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload("content must be string", "invalid_request"))
                     return
-            if restart:
-                stack_payload = {"ACTION": "restart", "STACK": "node"}
+                backup = bool(payload.get("backup") if "backup" in payload else True)
+                validate = bool(payload.get("validate") if "validate" in payload else True)
+                restart = bool(payload.get("restart") if "restart" in payload else False)
                 try:
-                    job = _create_job("remnawave.stack", stack_payload, dry_run=False)
+                    target = _config_path(name)
                 except Exception as exc:
-                    _json_response(
-                        self,
-                        HTTPStatus.BAD_REQUEST,
-                        _error_payload(f"config saved but restart failed: {exc}", "restart_failed", checks=checks),
-                    )
+                    _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(str(exc), "invalid_request"))
                     return
-                _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "checks": checks, "job": job})
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if backup and target.exists():
+                    backup_path = target.with_suffix(target.suffix + f".bak.{int(time.time())}")
+                    backup_path.write_text(target.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
+                target.write_text(content, encoding="utf-8")
+                checks: dict[str, Any] = {"written": str(target)}
+                if validate and name == "docker-compose":
+                    result = _run_cmd(_host_exec_cmd(["docker", "compose", "-f", str(target), "config"]), env=os.environ.copy(), timeout_s=60)
+                    checks["compose_config"] = result
+                    if not result.get("ok"):
+                        _json_response(
+                            self,
+                            HTTPStatus.BAD_REQUEST,
+                            _error_payload("docker compose config validation failed", "compose_validation_failed", checks=checks),
+                        )
+                        return
+                if restart:
+                    stack_payload = {"ACTION": "restart", "STACK": "node"}
+                    try:
+                        job = _create_job("remnawave.stack", stack_payload, dry_run=False)
+                    except Exception as exc:
+                        _json_response(
+                            self,
+                            HTTPStatus.BAD_REQUEST,
+                            _error_payload(f"config saved but restart failed: {exc}", "restart_failed", checks=checks),
+                        )
+                        return
+                    _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "checks": checks, "job": job})
+                    return
+                _json_response(self, HTTPStatus.OK, {"ok": True, "checks": checks})
                 return
-            _json_response(self, HTTPStatus.OK, {"ok": True, "checks": checks})
-            return
+            except Exception as exc:
+                _log_warning("remnawave_config_unhandled", error=str(exc))
+                _json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, _error_payload(str(exc), "config_write_failed"))
+                return
 
         if path == "/v1/actions/run":
             operation_id = str(payload.get("operation_id") or "").strip()

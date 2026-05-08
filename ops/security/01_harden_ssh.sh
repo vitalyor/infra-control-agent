@@ -17,7 +17,7 @@ fi
 grep -q '^PubkeyAuthentication' "${SSHD_CONFIG}" && \
   sed -i -E 's/^#?PubkeyAuthentication\s+.*/PubkeyAuthentication yes/' "${SSHD_CONFIG}" || \
   echo 'PubkeyAuthentication yes' >> "${SSHD_CONFIG}"
+mkdir -p /run/sshd
 sshd -t
 systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null
 echo "SSH hardening applied"
-
