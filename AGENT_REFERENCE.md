@@ -40,8 +40,11 @@ Body:
 - `security.rollback`
 - `system.update`
 - `network.bbr_cake`
+- `network.ipv6`
 - `services.update`
 - `remnawave.node_install`
+- `remnawave.stack`
+- `security.certbot`
 
 ## 4) Confirm для опасных действий
 
@@ -50,8 +53,10 @@ Body:
 - `security.rollback` -> `rollback_security`
 - `system.update` -> `system_update`
 - `network.bbr_cake` -> `network_tuning`
+- `network.ipv6` -> `ipv6_change`
 - `services.update` -> `services_update`
 - `remnawave.node_install` -> `install_node`
+- `security.certbot` -> `cert_manage`
 
 ## 5) Job API
 
@@ -65,14 +70,18 @@ Body:
 Добавлены для удобства интеграции:
 
 - `GET /v1/security/status`
+- `GET /v1/remnawave/config?name=docker-compose|nginx|caddy`
 - `POST /v1/system/update`
 - `POST /v1/security/harden-ssh`
 - `POST /v1/security/ssh-port`
 - `POST /v1/security/rollback`
 - `POST /v1/network/tuning`
+- `POST /v1/network/ipv6`
 - `POST /v1/services/update`
 - `POST /v1/remnawave/node/install`
+- `POST /v1/remnawave/stack`
+- `POST /v1/remnawave/config`
 - `POST /v1/ufw/action`
 - `POST /v1/fail2ban/action`
 - `POST /v1/fail2ban/config`
-
+- `POST /v1/security/certbot`
