@@ -8,7 +8,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt ./
 RUN apt-get update \
     && apt-get install -y --no-install-recommends docker.io docker-compose procps util-linux iproute2 curl certbot python3-certbot-dns-cloudflare \
-    && if [ ! -x /usr/bin/docker ] && [ -x /usr/bin/docker.io ]; then ln -s /usr/bin/docker.io /usr/bin/docker; fi \
+    && if [ ! -x /usr/bin/docker ]; then \
+         cat > /usr/local/bin/docker <<'EOF' \
+#!/usr/bin/env sh
+set -eu
+if [ "${1:-}" = "compose" ]; then
+  shift
+  exec docker-compose "$@"
+fi
+echo "docker shim: only 'docker compose ...' is supported in this image" >&2
+exit 127
+EOF
+         chmod +x /usr/local/bin/docker; \
+       fi \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt
 
