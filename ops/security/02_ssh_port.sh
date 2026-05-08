@@ -38,10 +38,10 @@ case "${ACTION}" in
     ;;
 esac
 
+mkdir -p /run/sshd
 sshd -t
 systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null
 if command -v ufw >/dev/null 2>&1; then
   ufw allow "${PORT}/tcp" || true
 fi
 echo "SSH port action applied: ${ACTION} ${PORT}"
-

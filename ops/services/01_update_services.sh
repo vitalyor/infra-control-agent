@@ -26,8 +26,7 @@ for d in "${arr[@]}"; do
   )
 done
 if (( count == 0 )); then
-  echo "no valid service dirs" >&2
-  exit 2
+  echo "no valid service dirs (nothing to update)"
+  exit 0
 fi
 echo "Services updated: ${count}"
-
