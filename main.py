@@ -44,6 +44,7 @@ def _setup_logging() -> None:
         "info": logging.INFO,
         "warning": logging.WARNING,
         "error": logging.ERROR,
+        "none": logging.CRITICAL + 10,
         "off": logging.CRITICAL + 10,
     }.get(AGENT_LOG_LEVEL, logging.INFO)
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ")
@@ -57,6 +58,18 @@ def _log(level: int, event: str, **fields: Any) -> None:
             continue
         parts.append(f"{k}={str(v).replace(chr(10), ' ')}")
     logging.log(level, " ".join(parts))
+
+
+def _log_debug(event: str, **fields: Any) -> None:
+    _log(logging.DEBUG, event, **fields)
+
+
+def _log_info(event: str, **fields: Any) -> None:
+    _log(logging.INFO, event, **fields)
+
+
+def _log_warning(event: str, **fields: Any) -> None:
+    _log(logging.WARNING, event, **fields)
 
 
 class Operation:
@@ -92,8 +105,10 @@ OPERATIONS: dict[str, Operation] = {
 
 def _run_cmd(cmd: list[str], env: dict[str, str], timeout_s: int) -> dict[str, Any]:
     started = time.time()
+    _log_debug("cmd_start", cmd=" ".join(cmd), timeout_s=timeout_s)
     try:
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=timeout_s, check=False)
+        _log_debug("cmd_finish", cmd=" ".join(cmd), exit_code=p.returncode, duration_ms=int((time.time() - started) * 1000))
         return {
             "ok": p.returncode == 0,
             "exit_code": p.returncode,
@@ -102,6 +117,7 @@ def _run_cmd(cmd: list[str], env: dict[str, str], timeout_s: int) -> dict[str, A
             "duration_ms": int((time.time() - started) * 1000),
         }
     except subprocess.TimeoutExpired as exc:
+        _log_warning("cmd_timeout", cmd=" ".join(cmd), timeout_s=timeout_s)
         return {
             "ok": False,
             "exit_code": None,
@@ -139,7 +155,9 @@ def _prune_jobs(max_age_s: int | None = None, max_count: int | None = None) -> d
                 if job and job["status"] not in {"queued", "running"}:
                     JOBS.pop(job_id, None)
                     removed.append(job_id)
-    return {"ok": True, "removed": removed, "remaining": len(JOBS)}
+    result = {"ok": True, "removed": removed, "remaining": len(JOBS)}
+    _log_debug("jobs_pruned", removed=len(removed), remaining=result["remaining"], max_age_s=age, max_count=count)
+    return result
 
 
 def _job_public(job: dict[str, Any]) -> dict[str, Any]:
@@ -161,9 +179,11 @@ def _run_job(job_id: str) -> None:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not job:
+            _log_warning("job_missing_on_start", job_id=job_id)
             return
         job["status"] = "running"
         job["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _log_info("job_started", job_id=job_id, operation_id=job["operation_id"], dry_run=job.get("dry_run"))
     op = OPERATIONS[job["operation_id"]]
     env = os.environ.copy()
     env["DRY_RUN"] = "true" if job.get("dry_run") else "false"
@@ -173,20 +193,33 @@ def _run_job(job_id: str) -> None:
     with JOBS_LOCK:
         job2 = JOBS.get(job_id)
         if not job2:
+            _log_warning("job_missing_on_finish", job_id=job_id)
             return
         job2["status"] = "completed" if result["ok"] else "failed"
         job2["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         job2["result"] = result
         job2["log"] = ((result.get("stdout") or "") + ("\n" + result.get("stderr") if result.get("stderr") else ""))[-AGENT_JOB_LOG_LIMIT:]
+    _log_info(
+        "job_finished",
+        job_id=job_id,
+        operation_id=job["operation_id"],
+        status=job2["status"],
+        ok=result.get("ok"),
+        exit_code=result.get("exit_code"),
+        duration_ms=result.get("duration_ms"),
+    )
 
 
 def _create_job(operation_id: str, params: dict[str, Any], dry_run: bool) -> dict[str, Any]:
     if operation_id not in OPERATIONS:
+        _log_warning("job_rejected_unknown_operation", operation_id=operation_id)
         raise ValueError("unknown operation_id")
     if _active_jobs_count() >= AGENT_MAX_ACTIVE_JOBS:
+        _log_warning("job_rejected_limit", operation_id=operation_id, max_active_jobs=AGENT_MAX_ACTIVE_JOBS)
         raise RuntimeError(f"too many active jobs: max {AGENT_MAX_ACTIVE_JOBS}")
     op = OPERATIONS[operation_id]
     if not op.script_path.exists():
+        _log_warning("job_rejected_missing_script", operation_id=operation_id, script=op.script_relpath)
         raise FileNotFoundError(f"operation script not found: {op.script_relpath}")
     job_id = uuid.uuid4().hex[:12]
     created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -203,6 +236,7 @@ def _create_job(operation_id: str, params: dict[str, Any], dry_run: bool) -> dic
     }
     with JOBS_LOCK:
         JOBS[job_id] = job
+    _log_info("job_created", job_id=job_id, operation_id=operation_id, dry_run=dry_run, params_count=len(params))
     threading.Thread(target=_run_job, args=(job_id,), daemon=True).start()
     return _job_public(job)
 
@@ -221,10 +255,13 @@ def _read_json_body(h: BaseHTTPRequestHandler) -> dict[str, Any]:
     if length <= 0:
         return {}
     if length > AGENT_MAX_BODY_BYTES:
+        _log_warning("request_rejected_body_too_large", path=urlparse(h.path).path, content_length=length, max=AGENT_MAX_BODY_BYTES)
         raise ValueError(f"request body too large: max {AGENT_MAX_BODY_BYTES} bytes")
     data = json.loads(h.rfile.read(length).decode("utf-8"))
     if not isinstance(data, dict):
+        _log_warning("request_rejected_body_not_object", path=urlparse(h.path).path)
         raise ValueError("request body must be object")
+    _log_debug("request_body_parsed", path=urlparse(h.path).path, keys=list(data.keys()))
     return data
 
 
@@ -238,7 +275,9 @@ def _authorized(h: BaseHTTPRequestHandler) -> bool:
 
 def _require_auth(h: BaseHTTPRequestHandler) -> bool:
     if _authorized(h):
+        _log_debug("auth_ok", path=urlparse(h.path).path, client=h.client_address[0])
         return True
+    _log_warning("auth_failed", path=urlparse(h.path).path, client=h.client_address[0])
     _json_response(h, HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
     return False
 
@@ -307,6 +346,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path.rstrip("/") or "/"
+        _log_debug("http_get", path=path, client=self.client_address[0])
         if path == "/health":
             _json_response(self, HTTPStatus.OK, {
                 "ok": True,
@@ -358,10 +398,12 @@ class Handler(BaseHTTPRequestHandler):
             result = _run_cmd(["/bin/bash", str(op.script_path)], env=env, timeout_s=op.timeout_s)
             _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.SERVICE_UNAVAILABLE, {"ok": result["ok"], "result": result})
             return
+        _log_warning("route_not_found", method="GET", path=path)
         _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
     def do_DELETE(self) -> None:
         path = urlparse(self.path).path.rstrip("/") or "/"
+        _log_debug("http_delete", path=path, client=self.client_address[0])
         if not _require_auth(self):
             return
         if path.startswith("/v1/actions/"):
@@ -369,27 +411,34 @@ class Handler(BaseHTTPRequestHandler):
             with JOBS_LOCK:
                 j = JOBS.get(job_id)
                 if j and j.get("status") in {"queued", "running"}:
+                    _log_warning("job_delete_rejected_active", job_id=job_id)
                     _json_response(self, HTTPStatus.CONFLICT, {"ok": False, "error": "cannot delete active job"})
                     return
                 removed = JOBS.pop(job_id, None)
             if not removed:
+                _log_warning("job_delete_not_found", job_id=job_id)
                 _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "job not found"})
                 return
+            _log_info("job_deleted", job_id=job_id)
             _json_response(self, HTTPStatus.OK, {"ok": True, "removed": job_id})
             return
+        _log_warning("route_not_found", method="DELETE", path=path)
         _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path.rstrip("/") or "/"
+        _log_debug("http_post", path=path, client=self.client_address[0])
         if not _require_auth(self):
             return
         try:
             payload = _read_json_body(self)
         except Exception as exc:
+            _log_warning("request_bad_json", path=path, error=str(exc))
             _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
 
         if path == "/v1/actions/prune":
+            _log_info("jobs_prune_requested", max_age_s=payload.get("max_age_s"), max_count=payload.get("max_count"))
             _json_response(self, HTTPStatus.OK, _prune_jobs(payload.get("max_age_s"), payload.get("max_count")))
             return
 
@@ -399,21 +448,26 @@ class Handler(BaseHTTPRequestHandler):
             params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
             op = OPERATIONS.get(operation_id)
             if not op:
+                _log_warning("job_run_unknown_operation", operation_id=operation_id)
                 _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "unknown operation_id"})
                 return
             if not dry_run and op.confirm:
                 confirm = str(payload.get("confirm") or "").strip().lower()
                 if confirm != op.confirm:
+                    _log_warning("job_run_confirm_mismatch", operation_id=operation_id, expected=op.confirm, got=confirm or "-")
                     _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"confirm must be {op.confirm}"})
                     return
             try:
                 job = _create_job(operation_id, params, dry_run=dry_run)
             except RuntimeError as exc:
+                _log_warning("job_run_rate_limited", operation_id=operation_id, error=str(exc))
                 _json_response(self, HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": str(exc)})
                 return
             except Exception as exc:
+                _log_warning("job_run_failed", operation_id=operation_id, error=str(exc))
                 _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
                 return
+            _log_info("job_run_accepted", operation_id=operation_id, job_id=job["id"], dry_run=dry_run)
             _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "job": job})
             return
 
@@ -436,34 +490,40 @@ class Handler(BaseHTTPRequestHandler):
             if not dry_run and op.confirm:
                 confirm = str(payload.get("confirm") or "").strip().lower()
                 if confirm != op.confirm:
+                    _log_warning("alias_confirm_mismatch", path=path, operation_id=op_id, expected=op.confirm, got=confirm or "-")
                     _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"confirm must be {op.confirm}"})
                     return
             params = _alias_params(path, payload)
             try:
                 job = _create_job(op_id, params, dry_run=dry_run)
             except RuntimeError as exc:
+                _log_warning("alias_rate_limited", path=path, operation_id=op_id, error=str(exc))
                 _json_response(self, HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": str(exc)})
                 return
             except Exception as exc:
+                _log_warning("alias_run_failed", path=path, operation_id=op_id, error=str(exc))
                 _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
                 return
+            _log_info("alias_run_accepted", path=path, operation_id=op_id, job_id=job["id"], dry_run=dry_run)
             _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "job": job})
             return
 
+        _log_warning("route_not_found", method="POST", path=path)
         _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
 
 def main() -> None:
     _setup_logging()
     if not AGENT_API_TOKEN and not AGENT_ALLOW_EMPTY_TOKEN:
+        _log_warning("agent_start_blocked_empty_token")
         raise SystemExit("AGENT_API_TOKEN is required")
     for op in OPERATIONS.values():
         if not op.script_path.exists():
+            _log_warning("agent_start_blocked_missing_script", operation_id=op.operation_id, script=op.script_relpath)
             raise SystemExit(f"missing operation script: {op.script_relpath}")
-    _log(logging.INFO, "agent_started", id=AGENT_ID, version=AGENT_VERSION, host=AGENT_HTTP_HOST, port=AGENT_HTTP_PORT)
+    _log_info("agent_started", id=AGENT_ID, version=AGENT_VERSION, host=AGENT_HTTP_HOST, port=AGENT_HTTP_PORT, log_level=AGENT_LOG_LEVEL)
     ThreadingHTTPServer((AGENT_HTTP_HOST, AGENT_HTTP_PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":
     main()
-

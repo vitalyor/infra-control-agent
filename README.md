@@ -79,7 +79,7 @@ curl -sS http://127.0.0.1:8091/health
 - `AGENT_ALLOW_EMPTY_TOKEN` (`false` по умолчанию)
 - `AGENT_HTTP_HOST` (`0.0.0.0`)
 - `AGENT_HTTP_PORT` (`8091`)
-- `AGENT_LOG_LEVEL` (`debug|info|warning|error|off`)
+- `AGENT_LOG_LEVEL` (`debug|info|warning|error|none|off`)
 - `AGENT_ACCESS_LOG` (`true|false`)
 - `AGENT_MAX_BODY_BYTES` (`65536`)
 - `AGENT_MAX_ACTIVE_JOBS` (`2`)
