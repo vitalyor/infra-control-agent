@@ -36,6 +36,8 @@ need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "required command not fou
 if [[ -z "${CERT_DOMAIN}" ]]; then
   CERT_DOMAIN="${DOMAIN}"
 fi
+CERT_FULLCHAIN_PATH="/etc/letsencrypt/live/${CERT_DOMAIN}/fullchain.pem"
+CERT_PRIVKEY_PATH="/etc/letsencrypt/live/${CERT_DOMAIN}/privkey.pem"
 
 if [[ "${CERT_METHOD}" != "none" ]]; then
   [[ -n "${CERT_EMAIL}" ]] || { echo "CERT_EMAIL is required when CERT_METHOD!=none" >&2; exit 2; }
@@ -70,6 +72,13 @@ mkdir -p "${BASE_DIR}" "${WWW_DIR}"
 
 # Cleanup conflicting path types from previous failed/manual installs.
 for p in "${BASE_DIR}/docker-compose.yml" "${BASE_DIR}/nginx.conf" "${BASE_DIR}/Caddyfile"; do
+  if [[ -e "${p}" && ! -f "${p}" ]]; then
+    rm -rf "${p}"
+  fi
+done
+
+# Cleanup conflicting certificate path types from previous failed starts.
+for p in "${CERT_FULLCHAIN_PATH}" "${CERT_PRIVKEY_PATH}"; do
   if [[ -e "${p}" && ! -f "${p}" ]]; then
     rm -rf "${p}"
   fi
@@ -158,6 +167,14 @@ EOF
       --dns-cloudflare --dns-cloudflare-credentials /root/.secrets/certbot/cloudflare.ini \
       --dns-cloudflare-propagation-seconds 60 -d "${CERT_DOMAIN}" \
       "${cert_force_args[@]}"
+  fi
+fi
+
+# Guardrail: for nginx/caddy TLS templates we need real cert files on host.
+if [[ "${CERT_METHOD}" != "none" ]]; then
+  if [[ ! -f "${CERT_FULLCHAIN_PATH}" || ! -f "${CERT_PRIVKEY_PATH}" ]]; then
+    echo "certificate files are missing or invalid: ${CERT_FULLCHAIN_PATH} ${CERT_PRIVKEY_PATH}" >&2
+    exit 2
   fi
 fi
 
