@@ -38,6 +38,7 @@ if [[ -z "${CERT_DOMAIN}" ]]; then
 fi
 CERT_FULLCHAIN_PATH="/etc/letsencrypt/live/${CERT_DOMAIN}/fullchain.pem"
 CERT_PRIVKEY_PATH="/etc/letsencrypt/live/${CERT_DOMAIN}/privkey.pem"
+EFFECTIVE_CERT_NAME="${CERT_DOMAIN}"
 
 if [[ "${CERT_METHOD}" != "none" ]]; then
   [[ -n "${CERT_EMAIL}" ]] || { echo "CERT_EMAIL is required when CERT_METHOD!=none" >&2; exit 2; }
@@ -167,6 +168,30 @@ EOF
       --dns-cloudflare --dns-cloudflare-credentials /root/.secrets/certbot/cloudflare.ini \
       --dns-cloudflare-propagation-seconds 60 -d "${CERT_DOMAIN}" \
       "${cert_force_args[@]}"
+  fi
+fi
+
+# Resolve actual cert lineage name (can be domain-0001, etc.) and align compose mounts.
+if [[ "${CERT_METHOD}" != "none" ]]; then
+  certbot_cert_path="$(certbot certificates --cert-name "${CERT_DOMAIN}" 2>/dev/null | awk -F': ' '/Certificate Path:/ {print $2; exit}' || true)"
+  if [[ -n "${certbot_cert_path}" ]]; then
+    cert_lineage_dir="$(dirname "${certbot_cert_path}")"
+    EFFECTIVE_CERT_NAME="$(basename "${cert_lineage_dir}")"
+  elif [[ -f "/etc/letsencrypt/live/${CERT_DOMAIN}/fullchain.pem" ]]; then
+    EFFECTIVE_CERT_NAME="${CERT_DOMAIN}"
+  else
+    candidate="$(ls -1d /etc/letsencrypt/live/${CERT_DOMAIN}-* 2>/dev/null | head -n1 || true)"
+    if [[ -n "${candidate}" && -f "${candidate}/fullchain.pem" ]]; then
+      EFFECTIVE_CERT_NAME="$(basename "${candidate}")"
+    fi
+  fi
+  CERT_FULLCHAIN_PATH="/etc/letsencrypt/live/${EFFECTIVE_CERT_NAME}/fullchain.pem"
+  CERT_PRIVKEY_PATH="/etc/letsencrypt/live/${EFFECTIVE_CERT_NAME}/privkey.pem"
+  if [[ "${EFFECTIVE_CERT_NAME}" != "${CERT_DOMAIN}" ]]; then
+    sed -i \
+      -e "s|/etc/letsencrypt/live/${CERT_DOMAIN}/fullchain.pem|/etc/letsencrypt/live/${EFFECTIVE_CERT_NAME}/fullchain.pem|g" \
+      -e "s|/etc/letsencrypt/live/${CERT_DOMAIN}/privkey.pem|/etc/letsencrypt/live/${EFFECTIVE_CERT_NAME}/privkey.pem|g" \
+      "${BASE_DIR}/docker-compose.yml"
   fi
 fi
 
