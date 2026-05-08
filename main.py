@@ -36,7 +36,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 OPS_DIR = SCRIPT_DIR / "ops"
 HOST_OPS_DIR = Path("/opt/infra-control-agent/ops-runtime")
 REMNANODE_DIR = Path("/opt/remnanode")
-SELF_UPDATE_LOG_PATH = Path("/tmp/infra-agent-self-update.log")
+SELF_UPDATE_LOG_PATH = Path(str(os.getenv("AGENT_UPDATE_LOG_PATH") or "/opt/infragent/.infra-agent-self-update.log"))
 
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
