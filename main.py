@@ -18,7 +18,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 
-AGENT_VERSION = "0.4.0"
+AGENT_VERSION = "0.4.1"
 AGENT_ID = str(os.getenv("AGENT_ID") or platform.node() or "infra-control-agent").strip()
 AGENT_API_TOKEN = str(os.getenv("AGENT_API_TOKEN") or "").strip()
 AGENT_ALLOW_EMPTY_TOKEN = str(os.getenv("AGENT_ALLOW_EMPTY_TOKEN") or "false").strip().lower() in {"1", "true", "yes", "on"}
