@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Infra Control Agent
 
 HTTP-agent для сервера. Агент запускается в Docker, получает токен из панели/бота и дает API для диагностики хоста и управления Docker.
@@ -653,3 +654,62 @@ net.ipv4.tcp_congestion_control = cubic
 ```
 
 Это нужно для случаев, когда BBR/fq были включены на сервере еще до установки агента. Агент не редактирует чужие sysctl-файлы, а управляет только своим override-файлом.
+=======
+# Infra Control Agent (v2)
+
+Агент для ноды: выполняет операции через локальные скрипты `ops/**/*.sh`, запускаемые по HTTP API.
+
+## Архитектура
+
+- `main.py` — HTTP API, авторизация, jobs, operation registry.
+- `ops/` — неинтерактивные скрипты операций.
+- `openapi.json` — актуальная схема API для интеграции бота.
+
+## Основные endpoint'ы
+
+- `GET /health` — без токена.
+- `GET /v1/agent/info` — состояние агента и список операций.
+- `GET /v1/actions` / `GET /v1/actions/{job_id}` / `DELETE /v1/actions/{job_id}`.
+- `POST /v1/actions/run` — универсальный запуск операции:
+  - `operation_id`
+  - `params` (ключи попадут в ENV скрипта верхним регистром)
+  - `dry_run`
+  - `confirm` (для опасных операций)
+- `POST /v1/actions/prune` — чистка истории jobs.
+
+## Совместимые alias endpoint'ы
+
+- `GET /v1/security/status`
+- `POST /v1/system/update`
+- `POST /v1/security/harden-ssh`
+- `POST /v1/security/ssh-port`
+- `POST /v1/security/rollback`
+- `POST /v1/network/tuning`
+- `POST /v1/services/update`
+- `POST /v1/remnawave/node/install`
+- `POST /v1/ufw/action`
+- `POST /v1/fail2ban/action`
+- `POST /v1/fail2ban/config`
+
+## Confirm-токены
+
+- `harden_ssh`
+- `ssh_port`
+- `rollback_security`
+- `system_update`
+- `network_tuning`
+- `services_update`
+- `install_node`
+
+## Быстрый запуск
+
+```bash
+docker compose up -d --build
+curl -sS http://127.0.0.1:8091/health
+```
+
+## Для бота
+
+Рекомендуемый путь — использовать только `POST /v1/actions/run` и хранить mapping операций на стороне бота.
+
+>>>>>>> 50286f7 (Refactor agent v2: ops-runner architecture, docs, tests)

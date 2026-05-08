@@ -1,0 +1,19 @@
+.env
+data/
+__pycache__/
+openapi.json
+
+# macOS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# local runtime dirs/files
+.host/
+*.log

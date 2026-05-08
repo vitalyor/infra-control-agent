@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+<<<<<<< HEAD
+=======
+import hmac
+>>>>>>> 50286f7 (Refactor agent v2: ops-runner architecture, docs, tests)
 import json
 import logging
 import os
 import platform
 import shutil
 import subprocess
+<<<<<<< HEAD
 import time
 import socket
 import threading
@@ -249,10 +254,108 @@ def _run_cmd(cmd: list[str], *, timeout_s: int = 120) -> dict[str, Any]:
     except subprocess.TimeoutExpired as exc:
         duration_ms = int((time.time() - started) * 1000)
         _log_warning("command_timeout", command=" ".join(cmd), timeout_s=timeout_s, duration_ms=duration_ms)
+=======
+import threading
+import time
+import uuid
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+
+AGENT_VERSION = "0.4.0"
+AGENT_ID = str(os.getenv("AGENT_ID") or platform.node() or "infra-control-agent").strip()
+AGENT_API_TOKEN = str(os.getenv("AGENT_API_TOKEN") or "").strip()
+AGENT_ALLOW_EMPTY_TOKEN = str(os.getenv("AGENT_ALLOW_EMPTY_TOKEN") or "false").strip().lower() in {"1", "true", "yes", "on"}
+AGENT_HTTP_HOST = str(os.getenv("AGENT_HTTP_HOST") or "0.0.0.0").strip()
+AGENT_HTTP_PORT = int(os.getenv("AGENT_HTTP_PORT") or "8091")
+AGENT_MAX_BODY_BYTES = int(os.getenv("AGENT_MAX_BODY_BYTES") or "65536")
+AGENT_MAX_ACTIVE_JOBS = max(1, int(os.getenv("AGENT_MAX_ACTIVE_JOBS") or "2"))
+AGENT_JOB_MAX_COUNT = max(0, int(os.getenv("AGENT_JOB_MAX_COUNT") or "100"))
+AGENT_JOB_MAX_AGE_S = max(0, int(os.getenv("AGENT_JOB_MAX_AGE_S") or "86400"))
+AGENT_JOB_LOG_LIMIT = max(1000, int(os.getenv("AGENT_JOB_LOG_LIMIT") or "30000"))
+AGENT_LOG_LEVEL = str(os.getenv("AGENT_LOG_LEVEL") or "info").strip().lower()
+AGENT_ACCESS_LOG = str(os.getenv("AGENT_ACCESS_LOG") or "true").strip().lower() not in {"0", "false", "no", "off"}
+AGENT_STARTED_AT = time.time()
+SCRIPT_DIR = Path(__file__).resolve().parent
+OPS_DIR = SCRIPT_DIR / "ops"
+
+JOBS: dict[str, dict[str, Any]] = {}
+JOBS_LOCK = threading.Lock()
+
+
+def _setup_logging() -> None:
+    level = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+        "off": logging.CRITICAL + 10,
+    }.get(AGENT_LOG_LEVEL, logging.INFO)
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ")
+    logging.Formatter.converter = time.gmtime
+
+
+def _log(level: int, event: str, **fields: Any) -> None:
+    parts = [f"event={event}"]
+    for k, v in fields.items():
+        if v is None:
+            continue
+        parts.append(f"{k}={str(v).replace(chr(10), ' ')}")
+    logging.log(level, " ".join(parts))
+
+
+class Operation:
+    def __init__(self, operation_id: str, script_relpath: str, timeout_s: int = 900, confirm: str | None = None) -> None:
+        self.operation_id = operation_id
+        self.script_relpath = script_relpath
+        self.timeout_s = timeout_s
+        self.confirm = confirm
+
+    @property
+    def script_path(self) -> Path:
+        return OPS_DIR / self.script_relpath
+
+
+OPERATIONS: dict[str, Operation] = {
+    "diagnostics.uptime": Operation("diagnostics.uptime", "diagnostics/01_get_uptime.sh", timeout_s=30),
+    "diagnostics.disk": Operation("diagnostics.disk", "diagnostics/02_check_disk_usage.sh", timeout_s=120),
+    "diagnostics.load_net": Operation("diagnostics.load_net", "diagnostics/03_check_load_and_net.sh", timeout_s=60),
+    "security.status": Operation("security.status", "security/00_get_security_status.sh", timeout_s=30),
+    "security.harden_ssh": Operation("security.harden_ssh", "security/01_harden_ssh.sh", timeout_s=180, confirm="harden_ssh"),
+    "security.ssh_port": Operation("security.ssh_port", "security/02_ssh_port.sh", timeout_s=180, confirm="ssh_port"),
+    "security.ufw": Operation("security.ufw", "security/03_setup_ufw.sh", timeout_s=300),
+    "security.fail2ban": Operation("security.fail2ban", "security/04_setup_fail2ban.sh", timeout_s=300),
+    "security.kernel": Operation("security.kernel", "security/05_apply_kernel.sh", timeout_s=120),
+    "security.ssh_notify": Operation("security.ssh_notify", "security/06_setup_ssh_login_notify.sh", timeout_s=90),
+    "security.rollback": Operation("security.rollback", "security/99_rollback_security.sh", timeout_s=180, confirm="rollback_security"),
+    "system.update": Operation("system.update", "system/01_update_system.sh", timeout_s=3600, confirm="system_update"),
+    "network.bbr_cake": Operation("network.bbr_cake", "network/01_bbr_cake.sh", timeout_s=120, confirm="network_tuning"),
+    "services.update": Operation("services.update", "services/01_update_services.sh", timeout_s=7200, confirm="services_update"),
+    "remnawave.node_install": Operation("remnawave.node_install", "remnawave/01_install_node.sh", timeout_s=1800, confirm="install_node"),
+}
+
+
+def _run_cmd(cmd: list[str], env: dict[str, str], timeout_s: int) -> dict[str, Any]:
+    started = time.time()
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=timeout_s, check=False)
+        return {
+            "ok": p.returncode == 0,
+            "exit_code": p.returncode,
+            "stdout": (p.stdout or "")[-12000:],
+            "stderr": (p.stderr or "")[-12000:],
+            "duration_ms": int((time.time() - started) * 1000),
+        }
+    except subprocess.TimeoutExpired as exc:
+>>>>>>> 50286f7 (Refactor agent v2: ops-runner architecture, docs, tests)
         return {
             "ok": False,
             "exit_code": None,
             "stdout": (exc.stdout or "")[-12000:] if isinstance(exc.stdout, str) else "",
+<<<<<<< HEAD
             "stderr": (exc.stderr or "")[-12000:] if isinstance(exc.stderr, str) else "command timed out",
             "duration_ms": duration_ms,
         }
@@ -1165,18 +1268,59 @@ def _append_job_log(job: dict[str, Any], text: str) -> None:
     job["log"] = str(job.get("log") or "") + text
     if len(job["log"]) > JOB_LOG_LIMIT:
         job["log"] = job["log"][-JOB_LOG_LIMIT:]
+=======
+            "stderr": ((exc.stderr or "")[-12000:] if isinstance(exc.stderr, str) else "command timed out"),
+            "duration_ms": int((time.time() - started) * 1000),
+        }
+
+
+def _active_jobs_count() -> int:
+    with JOBS_LOCK:
+        return sum(1 for j in JOBS.values() if j.get("status") in {"queued", "running"})
+
+
+def _prune_jobs(max_age_s: int | None = None, max_count: int | None = None) -> dict[str, Any]:
+    age = AGENT_JOB_MAX_AGE_S if max_age_s is None else max(0, int(max_age_s))
+    count = AGENT_JOB_MAX_COUNT if max_count is None else max(0, int(max_count))
+    now = time.time()
+    removed: list[str] = []
+    with JOBS_LOCK:
+        ids = sorted(JOBS.keys(), key=lambda i: JOBS[i]["created_ts"], reverse=True)
+        for job_id in list(ids):
+            job = JOBS.get(job_id)
+            if not job:
+                continue
+            if job["status"] in {"queued", "running"}:
+                continue
+            if age and now - float(job["created_ts"]) > age:
+                JOBS.pop(job_id, None)
+                removed.append(job_id)
+        if count and len(JOBS) > count:
+            ids2 = sorted(JOBS.keys(), key=lambda i: JOBS[i]["created_ts"], reverse=True)
+            for job_id in ids2[count:]:
+                job = JOBS.get(job_id)
+                if job and job["status"] not in {"queued", "running"}:
+                    JOBS.pop(job_id, None)
+                    removed.append(job_id)
+    return {"ok": True, "removed": removed, "remaining": len(JOBS)}
+>>>>>>> 50286f7 (Refactor agent v2: ops-runner architecture, docs, tests)
 
 
 def _job_public(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": job["id"],
+<<<<<<< HEAD
         "action": job["action"],
         "category": job.get("category"),
         "target": job.get("target"),
+=======
+        "operation_id": job["operation_id"],
+>>>>>>> 50286f7 (Refactor agent v2: ops-runner architecture, docs, tests)
         "status": job["status"],
         "created_at": job["created_at"],
         "started_at": job.get("started_at"),
         "finished_at": job.get("finished_at"),
+<<<<<<< HEAD
         "ok": job.get("ok"),
         "steps": job.get("steps", []),
         "log": job.get("log", ""),
@@ -2258,10 +2402,167 @@ def _is_authorized(handler: BaseHTTPRequestHandler) -> bool:
 
 
 class AgentHandler(BaseHTTPRequestHandler):
+=======
+        "dry_run": bool(job.get("dry_run")),
+        "params": job.get("params", {}),
+        "result": job.get("result"),
+        "log": (job.get("log") or "")[-AGENT_JOB_LOG_LIMIT:],
+    }
+
+
+def _run_job(job_id: str) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return
+        job["status"] = "running"
+        job["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    op = OPERATIONS[job["operation_id"]]
+    env = os.environ.copy()
+    env["DRY_RUN"] = "true" if job.get("dry_run") else "false"
+    for key, value in (job.get("params") or {}).items():
+        env[str(key).upper()] = str(value)
+    result = _run_cmd(["/bin/bash", str(op.script_path)], env=env, timeout_s=op.timeout_s)
+    with JOBS_LOCK:
+        job2 = JOBS.get(job_id)
+        if not job2:
+            return
+        job2["status"] = "completed" if result["ok"] else "failed"
+        job2["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        job2["result"] = result
+        job2["log"] = ((result.get("stdout") or "") + ("\n" + result.get("stderr") if result.get("stderr") else ""))[-AGENT_JOB_LOG_LIMIT:]
+
+
+def _create_job(operation_id: str, params: dict[str, Any], dry_run: bool) -> dict[str, Any]:
+    if operation_id not in OPERATIONS:
+        raise ValueError("unknown operation_id")
+    if _active_jobs_count() >= AGENT_MAX_ACTIVE_JOBS:
+        raise RuntimeError(f"too many active jobs: max {AGENT_MAX_ACTIVE_JOBS}")
+    op = OPERATIONS[operation_id]
+    if not op.script_path.exists():
+        raise FileNotFoundError(f"operation script not found: {op.script_relpath}")
+    job_id = uuid.uuid4().hex[:12]
+    created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    job = {
+        "id": job_id,
+        "operation_id": operation_id,
+        "status": "queued",
+        "created_at": created_at,
+        "created_ts": time.time(),
+        "params": params,
+        "dry_run": dry_run,
+        "result": None,
+        "log": "",
+    }
+    with JOBS_LOCK:
+        JOBS[job_id] = job
+    threading.Thread(target=_run_job, args=(job_id,), daemon=True).start()
+    return _job_public(job)
+
+
+def _json_response(h: BaseHTTPRequestHandler, status: HTTPStatus, payload: dict[str, Any]) -> None:
+    body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    h.send_response(status.value)
+    h.send_header("Content-Type", "application/json; charset=utf-8")
+    h.send_header("Content-Length", str(len(body)))
+    h.end_headers()
+    h.wfile.write(body)
+
+
+def _read_json_body(h: BaseHTTPRequestHandler) -> dict[str, Any]:
+    length = int(h.headers.get("Content-Length") or "0")
+    if length <= 0:
+        return {}
+    if length > AGENT_MAX_BODY_BYTES:
+        raise ValueError(f"request body too large: max {AGENT_MAX_BODY_BYTES} bytes")
+    data = json.loads(h.rfile.read(length).decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("request body must be object")
+    return data
+
+
+def _authorized(h: BaseHTTPRequestHandler) -> bool:
+    if not AGENT_API_TOKEN:
+        return AGENT_ALLOW_EMPTY_TOKEN
+    auth = str(h.headers.get("Authorization") or "").strip()
+    x_token = str(h.headers.get("X-Agent-Token") or "").strip()
+    return hmac.compare_digest(auth, f"Bearer {AGENT_API_TOKEN}") or hmac.compare_digest(x_token, AGENT_API_TOKEN)
+
+
+def _require_auth(h: BaseHTTPRequestHandler) -> bool:
+    if _authorized(h):
+        return True
+    _json_response(h, HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+    return False
+
+
+def _to_params(payload: dict[str, Any], exclude: set[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for k, v in payload.items():
+        if k in exclude:
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            out[k] = v
+    return out
+
+
+def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if path == "/v1/system/update":
+        return {"FULL_UPDATE": str(bool(payload.get("full") if "full" in payload else False)).lower()}
+    if path == "/v1/security/harden-ssh":
+        return {"DISABLE_PASSWORD_AUTH": str(bool(payload.get("disable_password_auth") if "disable_password_auth" in payload else True)).lower()}
+    if path == "/v1/security/ssh-port":
+        return {
+            "ACTION": str(payload.get("action") or "set"),
+            "PORT": str(payload.get("port") or ""),
+        }
+    if path == "/v1/network/tuning":
+        params: dict[str, Any] = {}
+        if "bbr" in payload:
+            params["ENABLE_BBR"] = str(bool(payload["bbr"])).lower()
+        if "cake" in payload:
+            params["ENABLE_CAKE"] = str(bool(payload["cake"])).lower()
+        return params
+    if path == "/v1/services/update":
+        params = {"MODE": str(payload.get("mode") or "pull")}
+        dirs = payload.get("dirs")
+        if isinstance(dirs, list):
+            params["DIRS"] = ",".join(str(x).strip() for x in dirs if str(x).strip())
+        return params
+    if path == "/v1/remnawave/node/install":
+        return {
+            "DOMAIN": str(payload.get("domain") or ""),
+            "NODE_PORT": str(payload.get("node_port") or 2222),
+            "NODE_SECRET_KEY": str(payload.get("node_secret_key") or "replace_with_node_secret_key"),
+        }
+    if path == "/v1/ufw/action":
+        params = {"UFW_ACTION": str(payload.get("action") or "enable")}
+        if payload.get("rule_action") is not None:
+            params["UFW_RULE_ACTION"] = str(payload.get("rule_action") or "")
+        if payload.get("rule") is not None:
+            params["UFW_RULE"] = str(payload.get("rule") or "")
+        return params
+    if path in {"/v1/fail2ban/action", "/v1/fail2ban/config"}:
+        params = {
+            "F2B_ACTION": str(payload.get("action") or ("config" if path.endswith("/config") else "restart"))
+        }
+        if payload.get("bantime") is not None:
+            params["F2B_BANTIME"] = str(payload["bantime"])
+        if payload.get("findtime") is not None:
+            params["F2B_FINDTIME"] = str(payload["findtime"])
+        if payload.get("maxretry") is not None:
+            params["F2B_MAXRETRY"] = str(payload["maxretry"])
+        return params
+    return _to_params(payload, {"dry_run", "confirm"})
+
+
+class Handler(BaseHTTPRequestHandler):
+>>>>>>> 50286f7 (Refactor agent v2: ops-runner architecture, docs, tests)
     server_version = f"InfraControlAgent/{AGENT_VERSION}"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         if AGENT_ACCESS_LOG:
+<<<<<<< HEAD
             _log_info("http_server", client=self.client_address[0], message=fmt % args)
 
     def _request_id(self) -> str:
@@ -2785,6 +3086,153 @@ class AgentHandler(BaseHTTPRequestHandler):
             if result.get("job"):
                 _log_warning("server_tuning_job_created", request_id=self._request_id(), profile=profile, action=action, job_id=result["job"]["id"])
             _json_response(self, status, result)
+=======
+            _log(logging.INFO, "http", client=self.client_address[0], msg=(fmt % args))
+
+    def do_GET(self) -> None:
+        path = urlparse(self.path).path.rstrip("/") or "/"
+        if path == "/health":
+            _json_response(self, HTTPStatus.OK, {
+                "ok": True,
+                "status": "ok",
+                "agent_id": AGENT_ID,
+                "version": AGENT_VERSION,
+                "hostname": platform.node(),
+                "uptime_s": int(time.time() - AGENT_STARTED_AT),
+                "docker_available": bool(shutil.which("docker")),
+            })
+            return
+        if not _require_auth(self):
+            return
+        if path == "/v1/agent/info":
+            _json_response(self, HTTPStatus.OK, {
+                "ok": True,
+                "agent": {"id": AGENT_ID, "version": AGENT_VERSION, "uptime_s": int(time.time() - AGENT_STARTED_AT)},
+                "config": {
+                    "http_host": AGENT_HTTP_HOST,
+                    "http_port": AGENT_HTTP_PORT,
+                    "token_configured": bool(AGENT_API_TOKEN),
+                    "allow_empty_token": AGENT_ALLOW_EMPTY_TOKEN,
+                    "max_active_jobs": AGENT_MAX_ACTIVE_JOBS,
+                    "max_body_bytes": AGENT_MAX_BODY_BYTES,
+                },
+                "operations": sorted(OPERATIONS.keys()),
+            })
+            return
+        if path == "/v1/actions":
+            _prune_jobs()
+            with JOBS_LOCK:
+                jobs = [_job_public(j) for j in JOBS.values()]
+            jobs.sort(key=lambda x: x["created_at"], reverse=True)
+            _json_response(self, HTTPStatus.OK, {"ok": True, "jobs": jobs[:100]})
+            return
+        if path.startswith("/v1/actions/"):
+            job_id = path.rsplit("/", 1)[-1]
+            with JOBS_LOCK:
+                j = JOBS.get(job_id)
+            if not j:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "job not found"})
+                return
+            _json_response(self, HTTPStatus.OK, {"ok": True, "job": _job_public(j)})
+            return
+        if path == "/v1/security/status":
+            op = OPERATIONS["security.status"]
+            env = os.environ.copy()
+            env["DRY_RUN"] = "false"
+            result = _run_cmd(["/bin/bash", str(op.script_path)], env=env, timeout_s=op.timeout_s)
+            _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.SERVICE_UNAVAILABLE, {"ok": result["ok"], "result": result})
+            return
+        _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
+
+    def do_DELETE(self) -> None:
+        path = urlparse(self.path).path.rstrip("/") or "/"
+        if not _require_auth(self):
+            return
+        if path.startswith("/v1/actions/"):
+            job_id = path.rsplit("/", 1)[-1]
+            with JOBS_LOCK:
+                j = JOBS.get(job_id)
+                if j and j.get("status") in {"queued", "running"}:
+                    _json_response(self, HTTPStatus.CONFLICT, {"ok": False, "error": "cannot delete active job"})
+                    return
+                removed = JOBS.pop(job_id, None)
+            if not removed:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "job not found"})
+                return
+            _json_response(self, HTTPStatus.OK, {"ok": True, "removed": job_id})
+            return
+        _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path.rstrip("/") or "/"
+        if not _require_auth(self):
+            return
+        try:
+            payload = _read_json_body(self)
+        except Exception as exc:
+            _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        if path == "/v1/actions/prune":
+            _json_response(self, HTTPStatus.OK, _prune_jobs(payload.get("max_age_s"), payload.get("max_count")))
+            return
+
+        if path == "/v1/actions/run":
+            operation_id = str(payload.get("operation_id") or "").strip()
+            dry_run = bool(payload.get("dry_run") if "dry_run" in payload else False)
+            params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            op = OPERATIONS.get(operation_id)
+            if not op:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "unknown operation_id"})
+                return
+            if not dry_run and op.confirm:
+                confirm = str(payload.get("confirm") or "").strip().lower()
+                if confirm != op.confirm:
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"confirm must be {op.confirm}"})
+                    return
+            try:
+                job = _create_job(operation_id, params, dry_run=dry_run)
+            except RuntimeError as exc:
+                _json_response(self, HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": str(exc)})
+                return
+            except Exception as exc:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                return
+            _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "job": job})
+            return
+
+        alias: dict[str, str] = {
+            "/v1/system/update": "system.update",
+            "/v1/security/harden-ssh": "security.harden_ssh",
+            "/v1/security/ssh-port": "security.ssh_port",
+            "/v1/security/rollback": "security.rollback",
+            "/v1/network/tuning": "network.bbr_cake",
+            "/v1/services/update": "services.update",
+            "/v1/remnawave/node/install": "remnawave.node_install",
+            "/v1/ufw/action": "security.ufw",
+            "/v1/fail2ban/action": "security.fail2ban",
+            "/v1/fail2ban/config": "security.fail2ban",
+        }
+        if path in alias:
+            op_id = alias[path]
+            op = OPERATIONS[op_id]
+            dry_run = bool(payload.get("dry_run") if "dry_run" in payload else False)
+            if not dry_run and op.confirm:
+                confirm = str(payload.get("confirm") or "").strip().lower()
+                if confirm != op.confirm:
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"confirm must be {op.confirm}"})
+                    return
+            params = _alias_params(path, payload)
+            try:
+                job = _create_job(op_id, params, dry_run=dry_run)
+            except RuntimeError as exc:
+                _json_response(self, HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": str(exc)})
+                return
+            except Exception as exc:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                return
+            _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "job": job})
+>>>>>>> 50286f7 (Refactor agent v2: ops-runner architecture, docs, tests)
             return
 
         _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
@@ -2793,6 +3241,7 @@ class AgentHandler(BaseHTTPRequestHandler):
 def main() -> None:
     _setup_logging()
     if not AGENT_API_TOKEN and not AGENT_ALLOW_EMPTY_TOKEN:
+<<<<<<< HEAD
         _log_error(
             "agent_token_required",
             message="AGENT_API_TOKEN is required; set AGENT_ALLOW_EMPTY_TOKEN=true only for local development",
@@ -2812,6 +3261,14 @@ def main() -> None:
     if not AGENT_API_TOKEN:
         _log_warning("agent_token_empty", message="protected endpoints are open because AGENT_ALLOW_EMPTY_TOKEN=true")
     server.serve_forever()
+=======
+        raise SystemExit("AGENT_API_TOKEN is required")
+    for op in OPERATIONS.values():
+        if not op.script_path.exists():
+            raise SystemExit(f"missing operation script: {op.script_relpath}")
+    _log(logging.INFO, "agent_started", id=AGENT_ID, version=AGENT_VERSION, host=AGENT_HTTP_HOST, port=AGENT_HTTP_PORT)
+    ThreadingHTTPServer((AGENT_HTTP_HOST, AGENT_HTTP_PORT), Handler).serve_forever()
+>>>>>>> 50286f7 (Refactor agent v2: ops-runner architecture, docs, tests)
 
 
 if __name__ == "__main__":
