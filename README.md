@@ -12,6 +12,14 @@
 
 ## Быстрый запуск
 
+Сначала установи Docker:
+
+```bash
+sudo curl -fsSL https://get.docker.com | sh
+```
+
+Дальше:
+
 ```bash
 mkdir -p /opt/infragent
 cd /opt/infragent
