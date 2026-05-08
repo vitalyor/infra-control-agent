@@ -48,6 +48,13 @@ need_cmd sed
 
 mkdir -p "${BASE_DIR}" "${WWW_DIR}"
 
+# Cleanup conflicting path types from previous failed/manual installs.
+for p in "${BASE_DIR}/docker-compose.yml" "${BASE_DIR}/nginx.conf" "${BASE_DIR}/Caddyfile"; do
+  if [[ -e "${p}" && ! -f "${p}" ]]; then
+    rm -rf "${p}"
+  fi
+done
+
 compose_tpl=""
 web_tpl=""
 if [[ "${WEB_SERVER}" == "nginx" ]]; then
