@@ -15,6 +15,8 @@ WEB_TEMPLATE_URL="${WEB_TEMPLATE_URL:-}"
 UFW_AUTO="${UFW_AUTO:-true}"                  # true|false
 SSH_PORT="${SSH_PORT:-22}"
 AGENT_PORT="${AGENT_PORT:-8091}"
+PANEL_IPS="${PANEL_IPS:-}"                    # comma-separated
+BOT_IPS="${BOT_IPS:-}"                        # comma-separated
 
 BASE_DIR="/opt/remnanode"
 WWW_DIR="/var/www/html"
@@ -147,9 +149,28 @@ if [[ "${UFW_AUTO}" == "true" ]]; then
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get -y install ufw
   fi
+  # Safety first: allow SSH before enabling firewall to avoid lockout.
   ufw allow "${SSH_PORT}/tcp" || true
-  ufw allow "${NODE_PORT}/tcp" || true
-  ufw allow "${AGENT_PORT}/tcp" || true
+  if [[ -n "${PANEL_IPS}" ]]; then
+    IFS=',' read -r -a panel_arr <<< "${PANEL_IPS}"
+    for ip in "${panel_arr[@]}"; do
+      ip="$(echo "${ip}" | xargs)"
+      [[ -z "${ip}" ]] && continue
+      ufw allow from "${ip}" to any port "${NODE_PORT}" proto tcp || true
+    done
+  else
+    ufw allow "${NODE_PORT}/tcp" || true
+  fi
+  if [[ -n "${BOT_IPS}" ]]; then
+    IFS=',' read -r -a bot_arr <<< "${BOT_IPS}"
+    for ip in "${bot_arr[@]}"; do
+      ip="$(echo "${ip}" | xargs)"
+      [[ -z "${ip}" ]] && continue
+      ufw allow from "${ip}" to any port "${AGENT_PORT}" proto tcp || true
+    done
+  else
+    ufw allow "${AGENT_PORT}/tcp" || true
+  fi
   ufw allow 80/tcp || true
   ufw allow 443/tcp || true
   ufw --force enable || true

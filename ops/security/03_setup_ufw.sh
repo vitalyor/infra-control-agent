@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-UFW_ACTION="${UFW_ACTION:-enable}"          # install|status|enable|disable|start|stop|restart|reset
+UFW_ACTION="${UFW_ACTION:-enable}"          # install|status|status_numbered|enable|disable|start|stop|restart|reset
 UFW_RULE_ACTION="${UFW_RULE_ACTION:-}"      # optional: allow|deny|reject|limit|delete
 UFW_RULE="${UFW_RULE:-}"                    # optional raw ufw rule
 UFW_RULE_NUM="${UFW_RULE_NUM:-}"            # optional numbered rule for delete
@@ -22,6 +22,7 @@ case "${UFW_ACTION}" in
     systemctl start ufw || true
     ;;
   status) ufw status verbose ;;
+  status_numbered) ufw status numbered ;;
   enable) ufw --force enable ;;
   disable) ufw disable ;;
   start) systemctl start ufw ;;
