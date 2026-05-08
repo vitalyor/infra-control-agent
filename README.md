@@ -118,6 +118,8 @@ curl -sS http://127.0.0.1:8091/health
 - `POST /v1/system/update`
 - `POST /v1/system/reboot`
   - поддерживает `mode=hard|soft` (`soft` ждёт завершение активных задач с таймаутом)
+- `POST /v1/agent/update`
+  - self-update агента (host `docker compose up -d --build --force-recreate --remove-orphans`)
 - `POST /v1/security/harden-ssh`
 - `POST /v1/security/ssh-port`
 - `POST /v1/security/rollback`
@@ -147,6 +149,7 @@ curl -sS http://127.0.0.1:8091/health
 - `security.rollback`
 - `system.update`
 - `system.reboot`
+- `system.agent_update`
 - `network.bbr_cake`
 - `network.ipv6`
 - `services.update`

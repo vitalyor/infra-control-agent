@@ -101,6 +101,7 @@ OPERATIONS: dict[str, Operation] = {
     "security.rollback": Operation("security.rollback", "security/99_rollback_security.sh", timeout_s=180, confirm="rollback_security"),
     "system.update": Operation("system.update", "system/01_update_system.sh", timeout_s=3600, confirm="system_update"),
     "system.reboot": Operation("system.reboot", "system/02_reboot.sh", timeout_s=30, confirm="reboot_host"),
+    "system.agent_update": Operation("system.agent_update", "system/03_update_agent.sh", timeout_s=30, confirm="agent_update"),
     "network.bbr_cake": Operation("network.bbr_cake", "network/01_bbr_cake.sh", timeout_s=120, confirm="network_tuning"),
     "network.ipv6": Operation("network.ipv6", "network/02_ipv6.sh", timeout_s=120, confirm="ipv6_change"),
     "services.update": Operation("services.update", "services/01_update_services.sh", timeout_s=7200, confirm="services_update"),
@@ -315,6 +316,14 @@ def _job_error_code(result: dict[str, Any]) -> str:
         return "ufw_action_unsupported"
     if "diag_ufw_rule_missing_input" in combined:
         return "ufw_rule_missing_input"
+    if "diag_agent_update_dir_not_found" in combined:
+        return "agent_update_dir_not_found"
+    if "diag_agent_update_compose_missing" in combined:
+        return "agent_update_compose_missing"
+    if "diag_agent_update_docker_missing" in combined:
+        return "agent_update_docker_missing"
+    if "diag_agent_update_delay_invalid" in combined:
+        return "agent_update_delay_invalid"
     if "diag_certbot_not_installed" in combined:
         return "missing_dependency_certbot"
     if "diag_certbot_action_unsupported" in combined:
@@ -397,6 +406,13 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
             params["REBOOT_WAIT_TIMEOUT_SEC"] = str(payload.get("wait_timeout_sec"))
         if payload.get("poll_sec") is not None:
             params["REBOOT_POLL_SEC"] = str(payload.get("poll_sec"))
+        return params
+    if path == "/v1/agent/update":
+        params: dict[str, Any] = {}
+        if payload.get("stack_dir") is not None:
+            params["AGENT_STACK_DIR"] = str(payload.get("stack_dir"))
+        if payload.get("delay_sec") is not None:
+            params["UPDATE_DELAY_SEC"] = str(payload.get("delay_sec"))
         return params
     if path == "/v1/security/harden-ssh":
         return {"DISABLE_PASSWORD_AUTH": str(bool(payload.get("disable_password_auth") if "disable_password_auth" in payload else True)).lower()}
@@ -719,6 +735,7 @@ class Handler(BaseHTTPRequestHandler):
         alias: dict[str, str] = {
             "/v1/system/update": "system.update",
             "/v1/system/reboot": "system.reboot",
+            "/v1/agent/update": "system.agent_update",
             "/v1/security/harden-ssh": "security.harden_ssh",
             "/v1/security/ssh-port": "security.ssh_port",
             "/v1/security/rollback": "security.rollback",

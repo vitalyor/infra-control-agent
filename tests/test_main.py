@@ -79,6 +79,11 @@ class AgentV2Tests(unittest.TestCase):
         self.assertEqual(params["REBOOT_WAIT_TIMEOUT_SEC"], "120")
         self.assertEqual(params["REBOOT_POLL_SEC"], "3")
 
+    def test_alias_agent_update_params(self) -> None:
+        params = agent._alias_params("/v1/agent/update", {"stack_dir": "/opt/infragent", "delay_sec": 2})
+        self.assertEqual(params["AGENT_STACK_DIR"], "/opt/infragent")
+        self.assertEqual(params["UPDATE_DELAY_SEC"], "2")
+
 
 if __name__ == "__main__":
     unittest.main()
