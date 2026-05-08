@@ -91,6 +91,16 @@ curl -sS http://127.0.0.1:8091/health
 - `AGENT_JOB_MAX_AGE_S` (`86400`)
 - `AGENT_JOB_LOG_LIMIT` (`30000`)
 
+## Ошибки API
+
+Во всех ошибках агент теперь возвращает:
+
+- `ok: false`
+- `error`: текст ошибки
+- `error_code`: стабильный код для логики бота
+
+Примеры `error_code`: `unauthorized`, `invalid_request`, `unknown_operation`, `confirm_required`, `too_many_active_jobs`, `job_create_failed`, `route_not_found`.
+
 ## Эндпоинты
 
 ### Публичный
@@ -106,6 +116,8 @@ curl -sS http://127.0.0.1:8091/health
 - `GET /v1/security/status`
 - `GET /v1/remnawave/config?name=docker-compose|nginx|caddy`
 - `POST /v1/system/update`
+- `POST /v1/system/reboot`
+  - поддерживает `mode=hard|soft` (`soft` ждёт завершение активных задач с таймаутом)
 - `POST /v1/security/harden-ssh`
 - `POST /v1/security/ssh-port`
 - `POST /v1/security/rollback`
@@ -134,6 +146,7 @@ curl -sS http://127.0.0.1:8091/health
 - `security.ssh_notify`
 - `security.rollback`
 - `system.update`
+- `system.reboot`
 - `network.bbr_cake`
 - `network.ipv6`
 - `services.update`

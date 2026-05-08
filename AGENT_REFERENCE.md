@@ -39,6 +39,7 @@ Body:
 - `security.ssh_notify`
 - `security.rollback`
 - `system.update`
+- `system.reboot`
 - `network.bbr_cake`
 - `network.ipv6`
 - `services.update`
@@ -52,6 +53,7 @@ Body:
 - `security.ssh_port` -> `ssh_port`
 - `security.rollback` -> `rollback_security`
 - `system.update` -> `system_update`
+- `system.reboot` -> `reboot_host`
 - `network.bbr_cake` -> `network_tuning`
 - `network.ipv6` -> `ipv6_change`
 - `services.update` -> `services_update`
@@ -72,6 +74,11 @@ Body:
 - `GET /v1/security/status`
 - `GET /v1/remnawave/config?name=docker-compose|nginx|caddy`
 - `POST /v1/system/update`
+- `POST /v1/system/reboot`
+  - `mode`: `hard|soft`
+  - `delay_sec`: задержка перед reboot (сек)
+  - `wait_timeout_sec`: для `soft`, сколько максимум ждать завершения активных job
+  - `poll_sec`: для `soft`, интервал проверки
 - `POST /v1/security/harden-ssh`
 - `POST /v1/security/ssh-port`
 - `POST /v1/security/rollback`
@@ -97,3 +104,78 @@ Body:
 - `panel_ips`: array of panel IPs for restricting `node_port` (or `panel_ip` for single IP)
 - `bot_ips`: array of bot IPs for restricting `agent_port` (or `bot_ip` for single IP)
 - `ufw_auto=true` applies rules in safe order: allow SSH first, then enable UFW
+- `ufw_strict=true` (по умолчанию): запрещает fallback в `allow any` для `node_port/agent_port`, требует `panel_ips` и `bot_ips`
+
+## 7) Стандарт ошибок API и job
+
+### Ошибка HTTP API
+Формат:
+
+```json
+{
+  "ok": false,
+  "error": "confirm must be install_node",
+  "error_code": "confirm_required"
+}
+```
+
+Основные `error_code`:
+- `unauthorized`
+- `invalid_request`
+- `unknown_operation`
+- `confirm_required`
+- `too_many_active_jobs`
+- `job_not_found`
+- `job_active`
+- `compose_validation_failed`
+- `restart_failed`
+- `route_not_found`
+
+### Ошибка внутри job (`job.result.error_code`)
+- `timeout`
+- `missing_dependency_docker`
+- `missing_dependency_ufw`
+- `missing_dependency_certbot`
+- `cert_issue_http_challenge`
+- `invalid_ufw_action`
+- `operation_script_missing`
+- `command_failed`
+
+## 8) Готовые payload-шаблоны для бота
+
+### Установка ноды (строгий UFW)
+
+```json
+{
+  "dry_run": false,
+  "confirm": "install_node",
+  "domain": "node.example.com",
+  "node_port": 2222,
+  "node_secret_key": "SECRET_FROM_PANEL",
+  "web_server": "nginx",
+  "cert_method": "http",
+  "cert_domain": "node.example.com",
+  "cert_email": "ops@example.com",
+  "ufw_auto": true,
+  "ufw_strict": true,
+  "ssh_port": 22,
+  "agent_port": 8091,
+  "panel_ips": ["1.2.3.4"],
+  "bot_ips": ["5.6.7.8"]
+}
+```
+
+### UFW статус с номерами + удаление по номеру
+
+```json
+{ "dry_run": false, "action": "status_numbered" }
+```
+
+```json
+{
+  "dry_run": false,
+  "action": "enable",
+  "rule_action": "delete",
+  "rule_num": 3
+}
+```
