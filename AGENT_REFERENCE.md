@@ -86,6 +86,7 @@ Body:
   - `confirm`: `agent_update`
   - `stack_dir` (опц., по умолчанию `/opt/infragent`)
   - `delay_sec` (опц., по умолчанию `2`)
+  - лог update пишется в `${stack_dir}/.infra-agent-self-update.log`
 - `POST /v1/security/harden-ssh`
 - `POST /v1/security/ssh-port`
 - `POST /v1/security/rollback`

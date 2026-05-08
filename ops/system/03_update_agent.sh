@@ -5,6 +5,7 @@ AGENT_STACK_DIR="${AGENT_STACK_DIR:-/opt/infragent}"
 UPDATE_DELAY_SEC="${UPDATE_DELAY_SEC:-2}"
 AGENT_SERVICE_NAME="${AGENT_SERVICE_NAME:-agent}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-infra-control-agent}"
+AGENT_UPDATE_LOG_PATH="${AGENT_UPDATE_LOG_PATH:-${AGENT_STACK_DIR}/.infra-agent-self-update.log}"
 
 if [[ "${DRY_RUN:-false}" == "true" ]]; then
   echo "DRY_RUN: agent self-update dir=${AGENT_STACK_DIR} delay=${UPDATE_DELAY_SEC}s"
@@ -37,13 +38,16 @@ docker compose up -d --build --force-recreate --remove-orphans '${AGENT_SERVICE_
 docker compose ps && \
 echo '[self-update] done'"
 
+mkdir -p "$(dirname "${AGENT_UPDATE_LOG_PATH}")"
+rm -f "${AGENT_UPDATE_LOG_PATH}" || true
+
 if command -v systemd-run >/dev/null 2>&1; then
   unit="infra-agent-self-update-$(date +%s)"
-  systemd-run --unit "${unit}" --collect /bin/bash -lc "${UPDATE_CMD}" >/tmp/infra-agent-self-update.log 2>&1 || {
+  systemd-run --unit "${unit}" --collect /bin/bash -lc "${UPDATE_CMD}" >"${AGENT_UPDATE_LOG_PATH}" 2>&1 || {
     echo "DIAG_AGENT_UPDATE_SYSTEMDRUN_FAILED" >&2
     exit 2
   }
 else
-  nohup /bin/bash -lc "${UPDATE_CMD}" >/tmp/infra-agent-self-update.log 2>&1 &
+  nohup /bin/bash -lc "${UPDATE_CMD}" >"${AGENT_UPDATE_LOG_PATH}" 2>&1 &
 fi
-echo "Agent self-update scheduled: dir=${AGENT_STACK_DIR} delay=${UPDATE_DELAY_SEC}s log=/tmp/infra-agent-self-update.log"
+echo "Agent self-update scheduled: dir=${AGENT_STACK_DIR} delay=${UPDATE_DELAY_SEC}s log=${AGENT_UPDATE_LOG_PATH}"
