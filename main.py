@@ -326,6 +326,8 @@ def _job_error_code(result: dict[str, Any]) -> str:
         return "agent_update_delay_invalid"
     if "diag_agent_update_container_invalid" in combined:
         return "agent_update_container_invalid"
+    if "diag_agent_update_systemdrun_failed" in combined:
+        return "agent_update_systemdrun_failed"
     if "diag_certbot_not_installed" in combined:
         return "missing_dependency_certbot"
     if "diag_certbot_action_unsupported" in combined:
