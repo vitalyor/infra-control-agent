@@ -40,6 +40,7 @@ Body:
 - `security.rollback`
 - `system.update`
 - `system.reboot`
+- `system.agent_update`
 - `network.bbr_cake`
 - `network.ipv6`
 - `services.update`
@@ -54,6 +55,7 @@ Body:
 - `security.rollback` -> `rollback_security`
 - `system.update` -> `system_update`
 - `system.reboot` -> `reboot_host`
+- `system.agent_update` -> `agent_update`
 - `network.bbr_cake` -> `network_tuning`
 - `network.ipv6` -> `ipv6_change`
 - `services.update` -> `services_update`
@@ -79,6 +81,10 @@ Body:
   - `delay_sec`: задержка перед reboot (сек)
   - `wait_timeout_sec`: для `soft`, сколько максимум ждать завершения активных job
   - `poll_sec`: для `soft`, интервал проверки
+- `POST /v1/agent/update`
+  - `confirm`: `agent_update`
+  - `stack_dir` (опц., по умолчанию `/opt/infragent`)
+  - `delay_sec` (опц., по умолчанию `2`)
 - `POST /v1/security/harden-ssh`
 - `POST /v1/security/ssh-port`
 - `POST /v1/security/rollback`
