@@ -14,7 +14,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 AGENT_VERSION = "0.4.0"
@@ -33,6 +33,7 @@ AGENT_ACCESS_LOG = str(os.getenv("AGENT_ACCESS_LOG") or "true").strip().lower() 
 AGENT_STARTED_AT = time.time()
 SCRIPT_DIR = Path(__file__).resolve().parent
 OPS_DIR = SCRIPT_DIR / "ops"
+REMNANODE_DIR = Path("/opt/remnanode")
 
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -98,8 +99,11 @@ OPERATIONS: dict[str, Operation] = {
     "security.rollback": Operation("security.rollback", "security/99_rollback_security.sh", timeout_s=180, confirm="rollback_security"),
     "system.update": Operation("system.update", "system/01_update_system.sh", timeout_s=3600, confirm="system_update"),
     "network.bbr_cake": Operation("network.bbr_cake", "network/01_bbr_cake.sh", timeout_s=120, confirm="network_tuning"),
+    "network.ipv6": Operation("network.ipv6", "network/02_ipv6.sh", timeout_s=120, confirm="ipv6_change"),
     "services.update": Operation("services.update", "services/01_update_services.sh", timeout_s=7200, confirm="services_update"),
     "remnawave.node_install": Operation("remnawave.node_install", "remnawave/01_install_node.sh", timeout_s=1800, confirm="install_node"),
+    "remnawave.stack": Operation("remnawave.stack", "remnawave/02_manage_stack.sh", timeout_s=3600),
+    "security.certbot": Operation("security.certbot", "security/07_certbot.sh", timeout_s=3600, confirm="cert_manage"),
 }
 
 
@@ -306,6 +310,8 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if "cake" in payload:
             params["ENABLE_CAKE"] = str(bool(payload["cake"])).lower()
         return params
+    if path == "/v1/network/ipv6":
+        return {"IPV6_ACTION": str(payload.get("action") or "status")}
     if path == "/v1/services/update":
         params = {"MODE": str(payload.get("mode") or "pull")}
         dirs = payload.get("dirs")
@@ -313,11 +319,36 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
             params["DIRS"] = ",".join(str(x).strip() for x in dirs if str(x).strip())
         return params
     if path == "/v1/remnawave/node/install":
-        return {
+        params = {
             "DOMAIN": str(payload.get("domain") or ""),
             "NODE_PORT": str(payload.get("node_port") or 2222),
-            "NODE_SECRET_KEY": str(payload.get("node_secret_key") or "replace_with_node_secret_key"),
+            "NODE_SECRET_KEY": str(payload.get("node_secret_key") or ""),
+            "WEB_SERVER": str(payload.get("web_server") or "nginx"),
+            "CERT_METHOD": str(payload.get("cert_method") or "none"),
         }
+        if payload.get("cert_domain") is not None:
+            params["CERT_DOMAIN"] = str(payload.get("cert_domain") or "")
+        if payload.get("cert_email") is not None:
+            params["CERT_EMAIL"] = str(payload.get("cert_email") or "")
+        if payload.get("cloudflare_api_token") is not None:
+            params["CLOUDFLARE_API_TOKEN"] = str(payload.get("cloudflare_api_token") or "")
+        if payload.get("template_source") is not None:
+            params["TEMPLATE_SOURCE"] = str(payload.get("template_source") or "builtin")
+        if payload.get("compose_template_url") is not None:
+            params["COMPOSE_TEMPLATE_URL"] = str(payload.get("compose_template_url") or "")
+        if payload.get("web_template_url") is not None:
+            params["WEB_TEMPLATE_URL"] = str(payload.get("web_template_url") or "")
+        return params
+    if path == "/v1/remnawave/stack":
+        params = {
+            "ACTION": str(payload.get("action") or "status"),
+            "STACK": str(payload.get("stack") or "auto"),
+        }
+        if payload.get("service") is not None:
+            params["SERVICE"] = str(payload.get("service") or "")
+        if payload.get("lines") is not None:
+            params["LOG_LINES"] = str(payload.get("lines"))
+        return params
     if path == "/v1/ufw/action":
         params = {"UFW_ACTION": str(payload.get("action") or "enable")}
         if payload.get("rule_action") is not None:
@@ -334,7 +365,30 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("maxretry") is not None:
             params["F2B_MAXRETRY"] = str(payload["maxretry"])
         return params
+    if path == "/v1/security/certbot":
+        params = {
+            "CERT_ACTION": str(payload.get("action") or "status"),
+            "CERT_METHOD": str(payload.get("method") or "http"),
+        }
+        if payload.get("domain") is not None:
+            params["DOMAIN"] = str(payload.get("domain") or "")
+        if payload.get("email") is not None:
+            params["EMAIL"] = str(payload.get("email") or "")
+        if payload.get("cloudflare_api_token") is not None:
+            params["CLOUDFLARE_API_TOKEN"] = str(payload.get("cloudflare_api_token") or "")
+        return params
     return _to_params(payload, {"dry_run", "confirm"})
+
+
+def _config_path(name: str) -> Path:
+    mapping = {
+        "docker-compose": REMNANODE_DIR / "docker-compose.yml",
+        "nginx": REMNANODE_DIR / "nginx.conf",
+        "caddy": REMNANODE_DIR / "Caddyfile",
+    }
+    if name not in mapping:
+        raise ValueError("name must be docker-compose|nginx|caddy")
+    return mapping[name]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -345,7 +399,8 @@ class Handler(BaseHTTPRequestHandler):
             _log(logging.INFO, "http", client=self.client_address[0], msg=(fmt % args))
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path.rstrip("/") or "/"
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
         _log_debug("http_get", path=path, client=self.client_address[0])
         if path == "/health":
             _json_response(self, HTTPStatus.OK, {
@@ -398,6 +453,20 @@ class Handler(BaseHTTPRequestHandler):
             result = _run_cmd(["/bin/bash", str(op.script_path)], env=env, timeout_s=op.timeout_s)
             _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.SERVICE_UNAVAILABLE, {"ok": result["ok"], "result": result})
             return
+        if path == "/v1/remnawave/config":
+            query = parse_qs(parsed.query)
+            name = str((query.get("name") or [""])[0]).strip()
+            try:
+                target = _config_path(name)
+            except Exception as exc:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                return
+            if not target.exists():
+                _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": f"config not found: {target}"})
+                return
+            text = target.read_text(encoding="utf-8", errors="ignore")
+            _json_response(self, HTTPStatus.OK, {"ok": True, "name": name, "path": str(target), "content": text})
+            return
         _log_warning("route_not_found", method="GET", path=path)
         _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
@@ -442,6 +511,44 @@ class Handler(BaseHTTPRequestHandler):
             _json_response(self, HTTPStatus.OK, _prune_jobs(payload.get("max_age_s"), payload.get("max_count")))
             return
 
+        if path == "/v1/remnawave/config":
+            name = str(payload.get("name") or "").strip()
+            content = payload.get("content")
+            if not isinstance(content, str):
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "content must be string"})
+                return
+            backup = bool(payload.get("backup") if "backup" in payload else True)
+            validate = bool(payload.get("validate") if "validate" in payload else True)
+            restart = bool(payload.get("restart") if "restart" in payload else False)
+            try:
+                target = _config_path(name)
+            except Exception as exc:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if backup and target.exists():
+                backup_path = target.with_suffix(target.suffix + f".bak.{int(time.time())}")
+                backup_path.write_text(target.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
+            target.write_text(content, encoding="utf-8")
+            checks: dict[str, Any] = {"written": str(target)}
+            if validate and name == "docker-compose":
+                result = _run_cmd(["docker", "compose", "-f", str(target), "config"], env=os.environ.copy(), timeout_s=60)
+                checks["compose_config"] = result
+                if not result.get("ok"):
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "docker compose config validation failed", "checks": checks})
+                    return
+            if restart:
+                stack_payload = {"ACTION": "restart", "STACK": "node"}
+                try:
+                    job = _create_job("remnawave.stack", stack_payload, dry_run=False)
+                except Exception as exc:
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"config saved but restart failed: {exc}", "checks": checks})
+                    return
+                _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "checks": checks, "job": job})
+                return
+            _json_response(self, HTTPStatus.OK, {"ok": True, "checks": checks})
+            return
+
         if path == "/v1/actions/run":
             operation_id = str(payload.get("operation_id") or "").strip()
             dry_run = bool(payload.get("dry_run") if "dry_run" in payload else False)
@@ -477,11 +584,14 @@ class Handler(BaseHTTPRequestHandler):
             "/v1/security/ssh-port": "security.ssh_port",
             "/v1/security/rollback": "security.rollback",
             "/v1/network/tuning": "network.bbr_cake",
+            "/v1/network/ipv6": "network.ipv6",
             "/v1/services/update": "services.update",
             "/v1/remnawave/node/install": "remnawave.node_install",
+            "/v1/remnawave/stack": "remnawave.stack",
             "/v1/ufw/action": "security.ufw",
             "/v1/fail2ban/action": "security.fail2ban",
             "/v1/fail2ban/config": "security.fail2ban",
+            "/v1/security/certbot": "security.certbot",
         }
         if path in alias:
             op_id = alias[path]
