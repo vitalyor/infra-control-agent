@@ -43,7 +43,31 @@ class AgentV2Tests(unittest.TestCase):
         self.assertEqual(params["a"], 1)
         self.assertNotIn("d", params)
 
+    def test_alias_node_install_defaults_include_ufw_strict(self) -> None:
+        params = agent._alias_params("/v1/remnawave/node/install", {"domain": "example.com", "node_secret_key": "s"})
+        self.assertEqual(params["UFW_STRICT"], "true")
+
+    def test_job_error_code_mappings(self) -> None:
+        self.assertEqual(agent._job_error_code({"exit_code": None, "stderr": ""}), "timeout")
+        self.assertEqual(
+            agent._job_error_code({"exit_code": 2, "stderr": "required command not found: docker"}),
+            "missing_dependency_docker",
+        )
+        self.assertEqual(
+            agent._job_error_code({"exit_code": 1, "stderr": "Some challenges have failed."}),
+            "cert_issue_http_challenge",
+        )
+
+    def test_alias_system_reboot_params(self) -> None:
+        params = agent._alias_params(
+            "/v1/system/reboot",
+            {"delay_sec": 5, "mode": "soft", "wait_timeout_sec": 120, "poll_sec": 3},
+        )
+        self.assertEqual(params["REBOOT_DELAY_SEC"], "5")
+        self.assertEqual(params["REBOOT_MODE"], "soft")
+        self.assertEqual(params["REBOOT_WAIT_TIMEOUT_SEC"], "120")
+        self.assertEqual(params["REBOOT_POLL_SEC"], "3")
+
 
 if __name__ == "__main__":
     unittest.main()
-

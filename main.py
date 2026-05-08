@@ -99,6 +99,7 @@ OPERATIONS: dict[str, Operation] = {
     "security.ssh_notify": Operation("security.ssh_notify", "security/06_setup_ssh_login_notify.sh", timeout_s=90),
     "security.rollback": Operation("security.rollback", "security/99_rollback_security.sh", timeout_s=180, confirm="rollback_security"),
     "system.update": Operation("system.update", "system/01_update_system.sh", timeout_s=3600, confirm="system_update"),
+    "system.reboot": Operation("system.reboot", "system/02_reboot.sh", timeout_s=30, confirm="reboot_host"),
     "network.bbr_cake": Operation("network.bbr_cake", "network/01_bbr_cake.sh", timeout_s=120, confirm="network_tuning"),
     "network.ipv6": Operation("network.ipv6", "network/02_ipv6.sh", timeout_s=120, confirm="ipv6_change"),
     "services.update": Operation("services.update", "services/01_update_services.sh", timeout_s=7200, confirm="services_update"),
@@ -209,6 +210,8 @@ def _run_job(job_id: str) -> None:
     for key, value in (job.get("params") or {}).items():
         env[str(key).upper()] = str(value)
     result = _run_cmd(_op_exec_cmd(op), env=env, timeout_s=op.timeout_s)
+    if not result.get("ok"):
+        result["error_code"] = _job_error_code(result)
     with JOBS_LOCK:
         job2 = JOBS.get(job_id)
         if not job2:
@@ -269,6 +272,31 @@ def _json_response(h: BaseHTTPRequestHandler, status: HTTPStatus, payload: dict[
     h.wfile.write(body)
 
 
+def _error_payload(error: str, error_code: str, **extra: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {"ok": False, "error": error, "error_code": error_code}
+    payload.update(extra)
+    return payload
+
+
+def _job_error_code(result: dict[str, Any]) -> str:
+    if result.get("exit_code") is None:
+        return "timeout"
+    stderr = str(result.get("stderr") or "").lower()
+    if "required command not found: docker" in stderr:
+        return "missing_dependency_docker"
+    if "required command not found: ufw" in stderr:
+        return "missing_dependency_ufw"
+    if "required command not found: certbot" in stderr:
+        return "missing_dependency_certbot"
+    if "certbot failed to authenticate" in stderr or "some challenges have failed" in stderr:
+        return "cert_issue_http_challenge"
+    if "invalid ufw_action" in stderr:
+        return "invalid_ufw_action"
+    if "operation script not found" in stderr:
+        return "operation_script_missing"
+    return "command_failed"
+
+
 def _read_json_body(h: BaseHTTPRequestHandler) -> dict[str, Any]:
     length = int(h.headers.get("Content-Length") or "0")
     if length <= 0:
@@ -297,7 +325,7 @@ def _require_auth(h: BaseHTTPRequestHandler) -> bool:
         _log_debug("auth_ok", path=urlparse(h.path).path, client=h.client_address[0])
         return True
     _log_warning("auth_failed", path=urlparse(h.path).path, client=h.client_address[0])
-    _json_response(h, HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+    _json_response(h, HTTPStatus.UNAUTHORIZED, _error_payload("unauthorized", "unauthorized"))
     return False
 
 
@@ -314,6 +342,17 @@ def _to_params(payload: dict[str, Any], exclude: set[str]) -> dict[str, Any]:
 def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     if path == "/v1/system/update":
         return {"FULL_UPDATE": str(bool(payload.get("full") if "full" in payload else False)).lower()}
+    if path == "/v1/system/reboot":
+        params: dict[str, Any] = {}
+        if payload.get("delay_sec") is not None:
+            params["REBOOT_DELAY_SEC"] = str(payload.get("delay_sec"))
+        if payload.get("mode") is not None:
+            params["REBOOT_MODE"] = str(payload.get("mode"))
+        if payload.get("wait_timeout_sec") is not None:
+            params["REBOOT_WAIT_TIMEOUT_SEC"] = str(payload.get("wait_timeout_sec"))
+        if payload.get("poll_sec") is not None:
+            params["REBOOT_POLL_SEC"] = str(payload.get("poll_sec"))
+        return params
     if path == "/v1/security/harden-ssh":
         return {"DISABLE_PASSWORD_AUTH": str(bool(payload.get("disable_password_auth") if "disable_password_auth" in payload else True)).lower()}
     if path == "/v1/security/ssh-port":
@@ -341,6 +380,7 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
             "WEB_SERVER": str(payload.get("web_server") or "nginx"),
             "CERT_METHOD": str(payload.get("cert_method") or "none"),
             "UFW_AUTO": str(bool(payload.get("ufw_auto") if "ufw_auto" in payload else True)).lower(),
+            "UFW_STRICT": str(bool(payload.get("ufw_strict") if "ufw_strict" in payload else True)).lower(),
             "SSH_PORT": str(payload.get("ssh_port") or 22),
             "AGENT_PORT": str(payload.get("agent_port") or 8091),
         }
@@ -480,7 +520,7 @@ class Handler(BaseHTTPRequestHandler):
             with JOBS_LOCK:
                 j = JOBS.get(job_id)
             if not j:
-                _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "job not found"})
+                _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("job not found", "job_not_found"))
                 return
             _json_response(self, HTTPStatus.OK, {"ok": True, "job": _job_public(j)})
             return
@@ -497,16 +537,16 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 target = _config_path(name)
             except Exception as exc:
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(str(exc), "invalid_request"))
                 return
             if not target.exists():
-                _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": f"config not found: {target}"})
+                _json_response(self, HTTPStatus.NOT_FOUND, _error_payload(f"config not found: {target}", "config_not_found"))
                 return
             text = target.read_text(encoding="utf-8", errors="ignore")
             _json_response(self, HTTPStatus.OK, {"ok": True, "name": name, "path": str(target), "content": text})
             return
         _log_warning("route_not_found", method="GET", path=path)
-        _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
+        _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not found", "route_not_found"))
 
     def do_DELETE(self) -> None:
         path = urlparse(self.path).path.rstrip("/") or "/"
@@ -519,18 +559,18 @@ class Handler(BaseHTTPRequestHandler):
                 j = JOBS.get(job_id)
                 if j and j.get("status") in {"queued", "running"}:
                     _log_warning("job_delete_rejected_active", job_id=job_id)
-                    _json_response(self, HTTPStatus.CONFLICT, {"ok": False, "error": "cannot delete active job"})
+                    _json_response(self, HTTPStatus.CONFLICT, _error_payload("cannot delete active job", "job_active"))
                     return
                 removed = JOBS.pop(job_id, None)
             if not removed:
                 _log_warning("job_delete_not_found", job_id=job_id)
-                _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "job not found"})
+                _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("job not found", "job_not_found"))
                 return
             _log_info("job_deleted", job_id=job_id)
             _json_response(self, HTTPStatus.OK, {"ok": True, "removed": job_id})
             return
         _log_warning("route_not_found", method="DELETE", path=path)
-        _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
+        _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not found", "route_not_found"))
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path.rstrip("/") or "/"
@@ -541,7 +581,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = _read_json_body(self)
         except Exception as exc:
             _log_warning("request_bad_json", path=path, error=str(exc))
-            _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(str(exc), "invalid_request"))
             return
 
         if path == "/v1/actions/prune":
@@ -553,7 +593,7 @@ class Handler(BaseHTTPRequestHandler):
             name = str(payload.get("name") or "").strip()
             content = payload.get("content")
             if not isinstance(content, str):
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "content must be string"})
+                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload("content must be string", "invalid_request"))
                 return
             backup = bool(payload.get("backup") if "backup" in payload else True)
             validate = bool(payload.get("validate") if "validate" in payload else True)
@@ -561,7 +601,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 target = _config_path(name)
             except Exception as exc:
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(str(exc), "invalid_request"))
                 return
             target.parent.mkdir(parents=True, exist_ok=True)
             if backup and target.exists():
@@ -573,14 +613,22 @@ class Handler(BaseHTTPRequestHandler):
                 result = _run_cmd(["docker", "compose", "-f", str(target), "config"], env=os.environ.copy(), timeout_s=60)
                 checks["compose_config"] = result
                 if not result.get("ok"):
-                    _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "docker compose config validation failed", "checks": checks})
+                    _json_response(
+                        self,
+                        HTTPStatus.BAD_REQUEST,
+                        _error_payload("docker compose config validation failed", "compose_validation_failed", checks=checks),
+                    )
                     return
             if restart:
                 stack_payload = {"ACTION": "restart", "STACK": "node"}
                 try:
                     job = _create_job("remnawave.stack", stack_payload, dry_run=False)
                 except Exception as exc:
-                    _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"config saved but restart failed: {exc}", "checks": checks})
+                    _json_response(
+                        self,
+                        HTTPStatus.BAD_REQUEST,
+                        _error_payload(f"config saved but restart failed: {exc}", "restart_failed", checks=checks),
+                    )
                     return
                 _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "checks": checks, "job": job})
                 return
@@ -594,23 +642,23 @@ class Handler(BaseHTTPRequestHandler):
             op = OPERATIONS.get(operation_id)
             if not op:
                 _log_warning("job_run_unknown_operation", operation_id=operation_id)
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": "unknown operation_id"})
+                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload("unknown operation_id", "unknown_operation"))
                 return
             if not dry_run and op.confirm:
                 confirm = str(payload.get("confirm") or "").strip().lower()
                 if confirm != op.confirm:
                     _log_warning("job_run_confirm_mismatch", operation_id=operation_id, expected=op.confirm, got=confirm or "-")
-                    _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"confirm must be {op.confirm}"})
+                    _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(f"confirm must be {op.confirm}", "confirm_required"))
                     return
             try:
                 job = _create_job(operation_id, params, dry_run=dry_run)
             except RuntimeError as exc:
                 _log_warning("job_run_rate_limited", operation_id=operation_id, error=str(exc))
-                _json_response(self, HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": str(exc)})
+                _json_response(self, HTTPStatus.TOO_MANY_REQUESTS, _error_payload(str(exc), "too_many_active_jobs"))
                 return
             except Exception as exc:
                 _log_warning("job_run_failed", operation_id=operation_id, error=str(exc))
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(str(exc), "job_create_failed"))
                 return
             _log_info("job_run_accepted", operation_id=operation_id, job_id=job["id"], dry_run=dry_run)
             _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "job": job})
@@ -618,6 +666,7 @@ class Handler(BaseHTTPRequestHandler):
 
         alias: dict[str, str] = {
             "/v1/system/update": "system.update",
+            "/v1/system/reboot": "system.reboot",
             "/v1/security/harden-ssh": "security.harden_ssh",
             "/v1/security/ssh-port": "security.ssh_port",
             "/v1/security/rollback": "security.rollback",
@@ -639,25 +688,25 @@ class Handler(BaseHTTPRequestHandler):
                 confirm = str(payload.get("confirm") or "").strip().lower()
                 if confirm != op.confirm:
                     _log_warning("alias_confirm_mismatch", path=path, operation_id=op_id, expected=op.confirm, got=confirm or "-")
-                    _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": f"confirm must be {op.confirm}"})
+                    _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(f"confirm must be {op.confirm}", "confirm_required"))
                     return
             params = _alias_params(path, payload)
             try:
                 job = _create_job(op_id, params, dry_run=dry_run)
             except RuntimeError as exc:
                 _log_warning("alias_rate_limited", path=path, operation_id=op_id, error=str(exc))
-                _json_response(self, HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": str(exc)})
+                _json_response(self, HTTPStatus.TOO_MANY_REQUESTS, _error_payload(str(exc), "too_many_active_jobs"))
                 return
             except Exception as exc:
                 _log_warning("alias_run_failed", path=path, operation_id=op_id, error=str(exc))
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload(str(exc), "job_create_failed"))
                 return
             _log_info("alias_run_accepted", path=path, operation_id=op_id, job_id=job["id"], dry_run=dry_run)
             _json_response(self, HTTPStatus.ACCEPTED, {"ok": True, "job": job})
             return
 
         _log_warning("route_not_found", method="POST", path=path)
-        _json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
+        _json_response(self, HTTPStatus.NOT_FOUND, _error_payload("not found", "route_not_found"))
 
 
 def main() -> None:

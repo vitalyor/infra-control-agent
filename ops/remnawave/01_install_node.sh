@@ -13,6 +13,7 @@ TEMPLATE_SOURCE="${TEMPLATE_SOURCE:-builtin}"      # builtin|url
 COMPOSE_TEMPLATE_URL="${COMPOSE_TEMPLATE_URL:-}"
 WEB_TEMPLATE_URL="${WEB_TEMPLATE_URL:-}"
 UFW_AUTO="${UFW_AUTO:-true}"                  # true|false
+UFW_STRICT="${UFW_STRICT:-true}"              # true|false
 SSH_PORT="${SSH_PORT:-22}"
 AGENT_PORT="${AGENT_PORT:-8091}"
 PANEL_IPS="${PANEL_IPS:-}"                    # comma-separated
@@ -46,9 +47,13 @@ if [[ "${UFW_AUTO}" != "true" && "${UFW_AUTO}" != "false" ]]; then
   echo "UFW_AUTO must be true or false" >&2
   exit 2
 fi
+if [[ "${UFW_STRICT}" != "true" && "${UFW_STRICT}" != "false" ]]; then
+  echo "UFW_STRICT must be true or false" >&2
+  exit 2
+fi
 
 if [[ "${DRY_RUN:-false}" == "true" ]]; then
-  echo "DRY_RUN: install node domain=${DOMAIN} cert_domain=${CERT_DOMAIN} web=${WEB_SERVER} cert=${CERT_METHOD} tpl=${TEMPLATE_SOURCE}"
+  echo "DRY_RUN: install node domain=${DOMAIN} cert_domain=${CERT_DOMAIN} web=${WEB_SERVER} cert=${CERT_METHOD} tpl=${TEMPLATE_SOURCE} ufw_strict=${UFW_STRICT}"
   exit 0
 fi
 
@@ -159,6 +164,10 @@ if [[ "${UFW_AUTO}" == "true" ]]; then
       ufw allow from "${ip}" to any port "${NODE_PORT}" proto tcp || true
     done
   else
+    if [[ "${UFW_STRICT}" == "true" ]]; then
+      echo "PANEL_IPS is required when UFW_STRICT=true" >&2
+      exit 2
+    fi
     ufw allow "${NODE_PORT}/tcp" || true
   fi
   if [[ -n "${BOT_IPS}" ]]; then
@@ -169,6 +178,10 @@ if [[ "${UFW_AUTO}" == "true" ]]; then
       ufw allow from "${ip}" to any port "${AGENT_PORT}" proto tcp || true
     done
   else
+    if [[ "${UFW_STRICT}" == "true" ]]; then
+      echo "BOT_IPS is required when UFW_STRICT=true" >&2
+      exit 2
+    fi
     ufw allow "${AGENT_PORT}/tcp" || true
   fi
   ufw allow 80/tcp || true
