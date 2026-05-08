@@ -18,7 +18,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 
-AGENT_VERSION = "0.4.4"
+AGENT_VERSION = "0.4.5"
 AGENT_ID = str(os.getenv("AGENT_ID") or platform.node() or "infra-control-agent").strip()
 AGENT_API_TOKEN = str(os.getenv("AGENT_API_TOKEN") or "").strip()
 AGENT_ALLOW_EMPTY_TOKEN = str(os.getenv("AGENT_ALLOW_EMPTY_TOKEN") or "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -109,6 +109,8 @@ OPERATIONS: dict[str, Operation] = {
     "remnawave.node_install": Operation("remnawave.node_install", "remnawave/01_install_node.sh", timeout_s=1800, confirm="install_node"),
     "remnawave.stack": Operation("remnawave.stack", "remnawave/02_manage_stack.sh", timeout_s=3600),
     "security.certbot": Operation("security.certbot", "security/07_certbot.sh", timeout_s=3600, confirm="cert_manage"),
+    "docker.logs": Operation("docker.logs", "docker/02_container_logs.sh", timeout_s=120),
+    "docker.container_action": Operation("docker.container_action", "docker/03_container_action.sh", timeout_s=90),
 }
 
 
@@ -303,6 +305,12 @@ def _job_error_code(result: dict[str, Any]) -> str:
         return "stack_compose_missing"
     if "diag_stack_action_unsupported" in combined:
         return "stack_action_unsupported"
+    if "diag_docker_container_required" in combined:
+        return "docker_container_required"
+    if "diag_docker_action_unsupported" in combined:
+        return "docker_action_unsupported"
+    if "diag_docker_container_not_found" in combined:
+        return "docker_container_not_found"
     if "diag_services_no_valid_dirs" in combined:
         return "services_no_valid_dirs"
     if "diag_fail2ban_action_unsupported" in combined:
@@ -523,6 +531,20 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("cloudflare_api_token") is not None:
             params["CLOUDFLARE_API_TOKEN"] = str(payload.get("cloudflare_api_token") or "")
         return params
+    if path == "/v1/docker/logs":
+        params = {"DOCKER_CONTAINER": str(payload.get("container") or "")}
+        if payload.get("lines") is not None:
+            params["LOG_LINES"] = str(payload.get("lines"))
+        if payload.get("since") is not None:
+            params["LOG_SINCE"] = str(payload.get("since") or "")
+        if payload.get("timestamps") is not None:
+            params["LOG_TIMESTAMPS"] = str(bool(payload.get("timestamps"))).lower()
+        return params
+    if path == "/v1/docker/container/action":
+        return {
+            "DOCKER_CONTAINER": str(payload.get("container") or ""),
+            "DOCKER_ACTION": str(payload.get("action") or ""),
+        }
     return _to_params(payload, {"dry_run", "confirm"})
 
 
@@ -622,6 +644,37 @@ class Handler(BaseHTTPRequestHandler):
             env["DRY_RUN"] = "false"
             result = _run_cmd(_op_exec_cmd(op), env=env, timeout_s=op.timeout_s)
             _json_response(self, HTTPStatus.OK if result["ok"] else HTTPStatus.SERVICE_UNAVAILABLE, {"ok": result["ok"], "result": result})
+            return
+        if path == "/v1/docker/containers":
+            cmd = _host_exec_cmd(["docker", "ps", "-a", "--format", "{{json .}}"])
+            result = _run_cmd(cmd, env=os.environ.copy(), timeout_s=30)
+            if not result.get("ok"):
+                code = _job_error_code(result)
+                _json_response(self, HTTPStatus.BAD_REQUEST, _error_payload("docker containers failed", code, result=result))
+                return
+            running_only = str((parse_qs(parsed.query).get("running") or ["true"])[0]).strip().lower() not in {"0", "false", "no", "off"}
+            items: list[dict[str, Any]] = []
+            for line in (result.get("stdout") or "").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                item = {
+                    "id": obj.get("ID"),
+                    "name": obj.get("Names"),
+                    "image": obj.get("Image"),
+                    "status": obj.get("Status"),
+                    "state": obj.get("State"),
+                    "ports": obj.get("Ports"),
+                    "running_for": obj.get("RunningFor"),
+                }
+                if running_only and str(item.get("state") or "").lower() != "running":
+                    continue
+                items.append(item)
+            _json_response(self, HTTPStatus.OK, {"ok": True, "containers": items, "running_only": running_only})
             return
         if path == "/v1/remnawave/config":
             query = parse_qs(parsed.query)
@@ -777,6 +830,8 @@ class Handler(BaseHTTPRequestHandler):
             "/v1/fail2ban/action": "security.fail2ban",
             "/v1/fail2ban/config": "security.fail2ban",
             "/v1/security/certbot": "security.certbot",
+            "/v1/docker/logs": "docker.logs",
+            "/v1/docker/container/action": "docker.container_action",
         }
         if path in alias:
             op_id = alias[path]

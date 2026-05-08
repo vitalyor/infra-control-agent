@@ -47,6 +47,8 @@ Body:
 - `remnawave.node_install`
 - `remnawave.stack`
 - `security.certbot`
+- `docker.logs`
+- `docker.container_action`
 
 ## 4) Confirm для опасных действий
 
@@ -100,6 +102,10 @@ Body:
 - `POST /v1/fail2ban/action`
 - `POST /v1/fail2ban/config`
 - `POST /v1/security/certbot`
+- `GET /v1/docker/containers`
+  - query `running=true|false` (по умолчанию `true`)
+- `POST /v1/docker/logs`
+- `POST /v1/docker/container/action`
 
 ### UFW payload (alias `/v1/ufw/action`)
 - `action`: `install|status|status_numbered|enable|disable|start|stop|restart|reset`
@@ -120,6 +126,27 @@ Body:
 - `status`: `missing|running_or_failed|success`
 - `success`: `true`, если в логе найден маркер `[self-update] done`
 - `content`: хвост лога (до 12000 символов)
+
+### Docker payload
+- `POST /v1/docker/logs`
+  - `container` (обязательно)
+  - `lines` (опц., 1..5000, default 300)
+  - `since` (опц., формат docker `10m`, `1h`, timestamp)
+  - `timestamps` (опц., bool)
+- `POST /v1/docker/container/action`
+  - `container` (обязательно)
+  - `action`: `start|stop|restart`
+
+### Статус Docker-блока (временная пометка)
+- Статус: `beta`
+- Тестирование: `partial`
+- Что проверено:
+  - маршруты/авторизация/создание job;
+  - маппинг параметров и обработка ответов.
+- Что не закрыто полностью:
+  - полноценный e2e запуск docker-операций в локальной macOS Docker Desktop среде (`nsenter`/host namespace ограничения).
+- Что нужно закрыть:
+  - финальный e2e прогон на Linux-хосте в боевом режиме (`containers`, `logs`, `start/stop/restart`).
 
 ## 7) Стандарт ошибок API и job
 
@@ -178,6 +205,9 @@ Body:
 - `agent_update_delay_invalid`
 - `agent_update_container_invalid`
 - `agent_update_systemdrun_failed`
+- `docker_container_required`
+- `docker_action_unsupported`
+- `docker_container_not_found`
 - `command_failed`
 
 ## 8) Готовые payload-шаблоны для бота

@@ -84,6 +84,21 @@ class AgentV2Tests(unittest.TestCase):
         self.assertEqual(params["AGENT_STACK_DIR"], "/opt/infragent")
         self.assertEqual(params["UPDATE_DELAY_SEC"], "2")
 
+    def test_alias_docker_logs_params(self) -> None:
+        params = agent._alias_params(
+            "/v1/docker/logs",
+            {"container": "remnanode", "lines": 200, "since": "10m", "timestamps": True},
+        )
+        self.assertEqual(params["DOCKER_CONTAINER"], "remnanode")
+        self.assertEqual(params["LOG_LINES"], "200")
+        self.assertEqual(params["LOG_SINCE"], "10m")
+        self.assertEqual(params["LOG_TIMESTAMPS"], "true")
+
+    def test_alias_docker_action_params(self) -> None:
+        params = agent._alias_params("/v1/docker/container/action", {"container": "remnanode", "action": "restart"})
+        self.assertEqual(params["DOCKER_CONTAINER"], "remnanode")
+        self.assertEqual(params["DOCKER_ACTION"], "restart")
+
 
 if __name__ == "__main__":
     unittest.main()
