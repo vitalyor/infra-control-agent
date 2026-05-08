@@ -52,6 +52,10 @@ services:
       AGENT_MAX_BODY_BYTES: 65536
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /opt:/opt
+      - /var/www/html:/var/www/html
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/lib/letsencrypt:/var/lib/letsencrypt
       - infra-control-agent-data:/agent/data
     ports:
       - "8091:8091"
