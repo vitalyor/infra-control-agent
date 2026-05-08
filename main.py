@@ -405,6 +405,8 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
             params["CERT_DOMAIN"] = str(payload.get("cert_domain") or "")
         if payload.get("cert_email") is not None:
             params["CERT_EMAIL"] = str(payload.get("cert_email") or "")
+        if payload.get("cert_force_renewal") is not None:
+            params["CERT_FORCE_RENEWAL"] = str(bool(payload.get("cert_force_renewal"))).lower()
         if payload.get("cloudflare_api_token") is not None:
             params["CLOUDFLARE_API_TOKEN"] = str(payload.get("cloudflare_api_token") or "")
         if payload.get("template_source") is not None:

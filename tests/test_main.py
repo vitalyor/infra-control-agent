@@ -47,6 +47,13 @@ class AgentV2Tests(unittest.TestCase):
         params = agent._alias_params("/v1/remnawave/node/install", {"domain": "example.com", "node_secret_key": "s"})
         self.assertEqual(params["UFW_STRICT"], "true")
 
+    def test_alias_node_install_cert_force_renewal(self) -> None:
+        params = agent._alias_params(
+            "/v1/remnawave/node/install",
+            {"domain": "example.com", "node_secret_key": "s", "cert_force_renewal": True},
+        )
+        self.assertEqual(params["CERT_FORCE_RENEWAL"], "true")
+
     def test_job_error_code_mappings(self) -> None:
         self.assertEqual(agent._job_error_code({"exit_code": None, "stderr": ""}), "timeout")
         self.assertEqual(
