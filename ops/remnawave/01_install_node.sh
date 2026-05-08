@@ -143,7 +143,7 @@ services:
 EOF
     docker compose -f "${tmp_compose}" run --rm certbot \
       certonly --non-interactive --agree-tos --standalone \
-      --email "${CERT_EMAIL}" -d "${CERT_DOMAIN}" \
+      --email "${CERT_EMAIL}" --cert-name "${CERT_DOMAIN}" -d "${CERT_DOMAIN}" \
       "${cert_force_args[@]}"
     rm -f "${tmp_compose}"
   else
@@ -154,6 +154,7 @@ dns_cloudflare_api_token = ${CLOUDFLARE_API_TOKEN}
 EOF
     chmod 600 /root/.secrets/certbot/cloudflare.ini
     certbot certonly --non-interactive --agree-tos --email "${CERT_EMAIL}" \
+      --cert-name "${CERT_DOMAIN}" \
       --dns-cloudflare --dns-cloudflare-credentials /root/.secrets/certbot/cloudflare.ini \
       --dns-cloudflare-propagation-seconds 60 -d "${CERT_DOMAIN}" \
       "${cert_force_args[@]}"
