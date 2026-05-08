@@ -32,7 +32,7 @@ case "${UFW_ACTION}" in
   stop) systemctl stop ufw ;;
   restart) systemctl restart ufw ;;
   reset) ufw --force reset ;;
-  *) echo "invalid UFW_ACTION" >&2; exit 2 ;;
+  *) echo "DIAG_UFW_ACTION_UNSUPPORTED action=${UFW_ACTION}" >&2; echo "invalid UFW_ACTION" >&2; exit 2 ;;
 esac
 
 if [[ -n "${UFW_RULE_ACTION}" ]]; then
@@ -57,6 +57,7 @@ if [[ -n "${UFW_RULE_ACTION}" ]]; then
       ufw "${UFW_RULE_ACTION}" "${UFW_PORT}/${UFW_PROTO}"
     fi
   else
+    echo "DIAG_UFW_RULE_MISSING_INPUT" >&2
     echo "rule_action provided but no rule/port/number specified" >&2
     exit 2
   fi

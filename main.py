@@ -288,18 +288,56 @@ def _error_payload(error: str, error_code: str, **extra: Any) -> dict[str, Any]:
 def _job_error_code(result: dict[str, Any]) -> str:
     if result.get("exit_code") is None:
         return "timeout"
-    stderr = str(result.get("stderr") or "").lower()
-    if "required command not found: docker" in stderr:
+    combined = (str(result.get("stderr") or "") + "\n" + str(result.get("stdout") or "")).lower()
+    if "required command not found: docker" in combined:
         return "missing_dependency_docker"
-    if "required command not found: ufw" in stderr:
+    if "required command not found: ufw" in combined:
         return "missing_dependency_ufw"
-    if "required command not found: certbot" in stderr:
+    if "required command not found: certbot" in combined:
         return "missing_dependency_certbot"
-    if "certbot failed to authenticate" in stderr or "some challenges have failed" in stderr:
+    if "diag_stack_dir_not_found" in combined:
+        return "stack_dir_not_found"
+    if "diag_stack_compose_missing" in combined:
+        return "stack_compose_missing"
+    if "diag_stack_action_unsupported" in combined:
+        return "stack_action_unsupported"
+    if "diag_services_no_valid_dirs" in combined:
+        return "services_no_valid_dirs"
+    if "diag_fail2ban_action_unsupported" in combined:
+        return "fail2ban_action_unsupported"
+    if "diag_ssh_port_invalid" in combined:
+        return "ssh_port_invalid"
+    if "diag_ssh_port_remove22_denied" in combined:
+        return "ssh_remove22_denied"
+    if "diag_ssh_action_unsupported" in combined:
+        return "ssh_action_unsupported"
+    if "diag_ufw_action_unsupported" in combined:
+        return "ufw_action_unsupported"
+    if "diag_ufw_rule_missing_input" in combined:
+        return "ufw_rule_missing_input"
+    if "diag_certbot_not_installed" in combined:
+        return "missing_dependency_certbot"
+    if "diag_certbot_action_unsupported" in combined:
+        return "cert_action_unsupported"
+    if "diag_certbot_domain_required" in combined:
+        return "cert_domain_required"
+    if "diag_certbot_email_required" in combined:
+        return "cert_email_required"
+    if "diag_certbot_cf_token_required" in combined:
+        return "cert_cf_token_required"
+    if "certbot_diag=rate_limit_exact_set" in combined or "too many certificates" in combined:
+        return "cert_rate_limited"
+    if "certbot_diag=port_80_unreachable_or_blocked" in combined:
+        return "cert_port80_unreachable"
+    if "certbot_diag=invalid_pem_content" in combined:
+        return "cert_invalid_pem"
+    if "certbot_diag=existing_lineage_conflict" in combined:
+        return "cert_lineage_conflict"
+    if "certbot_diag=auth_failed_http_or_dns" in combined or "certbot failed to authenticate" in combined or "some challenges have failed" in combined:
         return "cert_issue_http_challenge"
-    if "invalid ufw_action" in stderr:
+    if "invalid ufw_action" in combined:
         return "invalid_ufw_action"
-    if "operation script not found" in stderr:
+    if "operation script not found" in combined:
         return "operation_script_missing"
     return "command_failed"
 

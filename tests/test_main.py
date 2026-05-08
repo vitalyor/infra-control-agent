@@ -64,6 +64,10 @@ class AgentV2Tests(unittest.TestCase):
             agent._job_error_code({"exit_code": 1, "stderr": "Some challenges have failed."}),
             "cert_issue_http_challenge",
         )
+        self.assertEqual(
+            agent._job_error_code({"exit_code": 2, "stderr": "DIAG_STACK_COMPOSE_MISSING dir=/opt/remnanode"}),
+            "stack_compose_missing",
+        )
 
     def test_alias_system_reboot_params(self) -> None:
         params = agent._alias_params(

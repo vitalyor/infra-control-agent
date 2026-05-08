@@ -26,6 +26,40 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="${SCRIPT_DIR}/templates"
 
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "required command not found: $1" >&2; exit 2; }; }
+diagnose_certbot_failure() {
+  local combined="${1:-}"
+  echo "certbot failed, diagnostics:"
+  if echo "${combined}" | grep -qi "too many certificates"; then
+    echo "CERTBOT_DIAG=rate_limit_exact_set"
+  elif echo "${combined}" | grep -qi "failed to authenticate"; then
+    echo "CERTBOT_DIAG=auth_failed_http_or_dns"
+  elif echo "${combined}" | grep -qi "connection refused"; then
+    echo "CERTBOT_DIAG=port_80_unreachable_or_blocked"
+  elif echo "${combined}" | grep -qi "no start line"; then
+    echo "CERTBOT_DIAG=invalid_pem_content"
+  elif echo "${combined}" | grep -qi "live directory exists"; then
+    echo "CERTBOT_DIAG=existing_lineage_conflict"
+  else
+    echo "CERTBOT_DIAG=unknown"
+  fi
+  if [[ -f /var/log/letsencrypt/letsencrypt.log ]]; then
+    echo "----- certbot log tail -----"
+    tail -n 80 /var/log/letsencrypt/letsencrypt.log || true
+    echo "----- end certbot log tail -----"
+  fi
+}
+run_cmd_with_diag() {
+  set +e
+  local output
+  output="$("$@" 2>&1)"
+  local rc=$?
+  set -e
+  echo "${output}"
+  if [[ ${rc} -ne 0 ]]; then
+    diagnose_certbot_failure "${output}"
+    exit ${rc}
+  fi
+}
 
 [[ -n "${DOMAIN}" ]] || { echo "DOMAIN is required" >&2; exit 2; }
 [[ -n "${NODE_SECRET_KEY}" ]] || { echo "NODE_SECRET_KEY is required" >&2; exit 2; }
@@ -154,7 +188,15 @@ EOF
     docker compose -f "${tmp_compose}" run --rm certbot \
       certonly --non-interactive --agree-tos --standalone \
       --email "${CERT_EMAIL}" --cert-name "${CERT_DOMAIN}" -d "${CERT_DOMAIN}" \
-      "${cert_force_args[@]}"
+      "${cert_force_args[@]}" > /tmp/infra-agent-certbot.out 2>&1 || true
+    certbot_output="$(cat /tmp/infra-agent-certbot.out 2>/dev/null || true)"
+    echo "${certbot_output}"
+    if grep -qiE "error|failed|too many certificates|connection refused|live directory exists" /tmp/infra-agent-certbot.out; then
+      diagnose_certbot_failure "${certbot_output}"
+      rm -f "${tmp_compose}" /tmp/infra-agent-certbot.out
+      exit 1
+    fi
+    rm -f /tmp/infra-agent-certbot.out
     rm -f "${tmp_compose}"
   else
     need_cmd certbot
@@ -163,7 +205,7 @@ EOF
 dns_cloudflare_api_token = ${CLOUDFLARE_API_TOKEN}
 EOF
     chmod 600 /root/.secrets/certbot/cloudflare.ini
-    certbot certonly --non-interactive --agree-tos --email "${CERT_EMAIL}" \
+    run_cmd_with_diag certbot certonly --non-interactive --agree-tos --email "${CERT_EMAIL}" \
       --cert-name "${CERT_DOMAIN}" \
       --dns-cloudflare --dns-cloudflare-credentials /root/.secrets/certbot/cloudflare.ini \
       --dns-cloudflare-propagation-seconds 60 -d "${CERT_DOMAIN}" \

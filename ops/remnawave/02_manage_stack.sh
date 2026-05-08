@@ -23,8 +23,8 @@ resolve_dir() {
   esac
 }
 
-DIR="$(resolve_dir)" || { echo "stack dir not found for STACK=${STACK}" >&2; exit 2; }
-[[ -f "${DIR}/docker-compose.yml" ]] || { echo "docker-compose.yml not found in ${DIR}" >&2; exit 2; }
+DIR="$(resolve_dir)" || { echo "DIAG_STACK_DIR_NOT_FOUND stack=${STACK}" >&2; echo "stack dir not found for STACK=${STACK}" >&2; exit 2; }
+[[ -f "${DIR}/docker-compose.yml" ]] || { echo "DIAG_STACK_COMPOSE_MISSING dir=${DIR}" >&2; echo "docker-compose.yml not found in ${DIR}" >&2; exit 2; }
 
 if [[ "${DRY_RUN:-false}" == "true" ]]; then
   echo "DRY_RUN: remnawave stack action=${ACTION} stack=${STACK} dir=${DIR} service=${SERVICE} lines=${LOG_LINES}"
@@ -75,6 +75,7 @@ case "${ACTION}" in
     fi
     ;;
   *)
+    echo "DIAG_STACK_ACTION_UNSUPPORTED action=${ACTION}" >&2
     echo "unsupported ACTION=${ACTION}" >&2
     exit 2
     ;;
