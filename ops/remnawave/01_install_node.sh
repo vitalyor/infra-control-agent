@@ -98,10 +98,24 @@ cat > "${WWW_DIR}/index.html" <<'EOF'
 EOF
 
 if [[ "${CERT_METHOD}" != "none" ]]; then
-  need_cmd certbot
   if [[ "${CERT_METHOD}" == "http" ]]; then
-    certbot certonly --non-interactive --agree-tos --standalone --email "${CERT_EMAIL}" -d "${CERT_DOMAIN}"
+    tmp_compose="/tmp/infra-agent-certbot-http.yml"
+    cat > "${tmp_compose}" <<EOF
+services:
+  certbot:
+    image: certbot/certbot:latest
+    network_mode: host
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/lib/letsencrypt:/var/lib/letsencrypt
+    entrypoint: ["certbot"]
+EOF
+    docker compose -f "${tmp_compose}" run --rm certbot \
+      certonly --non-interactive --agree-tos --standalone \
+      --email "${CERT_EMAIL}" -d "${CERT_DOMAIN}"
+    rm -f "${tmp_compose}"
   else
+    need_cmd certbot
     mkdir -p /root/.secrets/certbot
     cat > /root/.secrets/certbot/cloudflare.ini <<EOF
 dns_cloudflare_api_token = ${CLOUDFLARE_API_TOKEN}
