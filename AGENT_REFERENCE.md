@@ -113,6 +113,13 @@ Body:
 - `bot_ips`: array of bot IPs for restricting `agent_port` (or `bot_ip` for single IP)
 - `ufw_auto=true` applies rules in safe order: allow SSH first, then enable UFW
 - `ufw_strict=true` (по умолчанию): запрещает fallback в `allow any` для `node_port/agent_port`, требует `panel_ips` и `bot_ips`
+- `cert_force_renewal=true|false` (по умолчанию `true`)
+
+### Agent update log (`GET /v1/agent/update-log`)
+- `exists`: есть ли лог-файл update
+- `status`: `missing|running_or_failed|success`
+- `success`: `true`, если в логе найден маркер `[self-update] done`
+- `content`: хвост лога (до 12000 символов)
 
 ## 7) Стандарт ошибок API и job
 
@@ -127,7 +134,7 @@ Body:
 }
 ```
 
-Основные `error_code`:
+Основные `error_code` (HTTP API):
 - `unauthorized`
 - `invalid_request`
 - `unknown_operation`
@@ -144,9 +151,33 @@ Body:
 - `missing_dependency_docker`
 - `missing_dependency_ufw`
 - `missing_dependency_certbot`
+- `stack_dir_not_found`
+- `stack_compose_missing`
+- `stack_action_unsupported`
+- `services_no_valid_dirs`
+- `fail2ban_action_unsupported`
+- `ssh_port_invalid`
+- `ssh_remove22_denied`
+- `ssh_action_unsupported`
+- `ufw_action_unsupported`
+- `ufw_rule_missing_input`
 - `cert_issue_http_challenge`
+- `cert_rate_limited`
+- `cert_port80_unreachable`
+- `cert_invalid_pem`
+- `cert_lineage_conflict`
+- `cert_action_unsupported`
+- `cert_domain_required`
+- `cert_email_required`
+- `cert_cf_token_required`
 - `invalid_ufw_action`
 - `operation_script_missing`
+- `agent_update_dir_not_found`
+- `agent_update_compose_missing`
+- `agent_update_docker_missing`
+- `agent_update_delay_invalid`
+- `agent_update_container_invalid`
+- `agent_update_systemdrun_failed`
 - `command_failed`
 
 ## 8) Готовые payload-шаблоны для бота
