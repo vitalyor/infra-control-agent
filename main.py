@@ -325,6 +325,9 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
             "NODE_SECRET_KEY": str(payload.get("node_secret_key") or ""),
             "WEB_SERVER": str(payload.get("web_server") or "nginx"),
             "CERT_METHOD": str(payload.get("cert_method") or "none"),
+            "UFW_AUTO": str(bool(payload.get("ufw_auto") if "ufw_auto" in payload else True)).lower(),
+            "SSH_PORT": str(payload.get("ssh_port") or 22),
+            "AGENT_PORT": str(payload.get("agent_port") or 8091),
         }
         if payload.get("cert_domain") is not None:
             params["CERT_DOMAIN"] = str(payload.get("cert_domain") or "")
@@ -355,6 +358,16 @@ def _alias_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
             params["UFW_RULE_ACTION"] = str(payload.get("rule_action") or "")
         if payload.get("rule") is not None:
             params["UFW_RULE"] = str(payload.get("rule") or "")
+        if payload.get("rule_num") is not None:
+            params["UFW_RULE_NUM"] = str(payload.get("rule_num") or "")
+        if payload.get("port") is not None:
+            params["UFW_PORT"] = str(payload.get("port") or "")
+        if payload.get("proto") is not None:
+            params["UFW_PROTO"] = str(payload.get("proto") or "")
+        if payload.get("from") is not None:
+            params["UFW_FROM"] = str(payload.get("from") or "")
+        if payload.get("to") is not None:
+            params["UFW_TO"] = str(payload.get("to") or "")
         return params
     if path in {"/v1/fail2ban/action", "/v1/fail2ban/config"}:
         params = {"F2B_ACTION": str(payload.get("action") or ("config" if path.endswith("/config") else "restart"))}

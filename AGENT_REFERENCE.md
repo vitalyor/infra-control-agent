@@ -85,3 +85,10 @@ Body:
 - `POST /v1/fail2ban/action`
 - `POST /v1/fail2ban/config`
 - `POST /v1/security/certbot`
+
+### UFW payload (alias `/v1/ufw/action`)
+- `action`: `install|status|enable|disable|start|stop|restart|reset`
+- `rule_action`: `allow|deny|reject|limit|delete`
+- Raw rule mode: `rule` (example: `8091/tcp`, `allow 8091/tcp`)
+- Structured mode: `port`, `proto`, `from`, `to`
+- Delete by number: `rule_num` with `rule_action=delete`
